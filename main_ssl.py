@@ -100,6 +100,7 @@ if __name__ == '__main__':
 
         NUM_TRAIN = no_train
         indices = list(range(NUM_TRAIN))
+        random.seed(1234)
         random.shuffle(indices)
 
         if args.total:
@@ -218,16 +219,16 @@ if __name__ == '__main__':
                 if args.ssl:
                     lab_loader = DataLoader(data_train, batch_size=BATCH, 
                                             sampler=SubsetSequentialSampler(interleaved), 
-                                            pin_memory=True, drop_last=drop_flag)
+                                            pin_memory=True, drop_last=drop_flag, num_workers=4)
                     lab_loader2 = DataLoader(data_train2, batch_size=BATCH, 
                                             sampler=SubsetSequentialSampler(interleaved), 
-                                            pin_memory=True, drop_last=drop_flag)
+                                            pin_memory=True, drop_last=drop_flag, num_workers=4)
                     unlab_loader2 = DataLoader(data_unlabeled2, batch_size=BATCH, 
                                             sampler=SubsetSequentialSampler(subset), 
-                                            pin_memory=True, drop_last=drop_flag)
+                                            pin_memory=True, drop_last=drop_flag, num_workers=4)
                     unlab_loader = DataLoader(data_unlabeled, batch_size=BATCH, 
                                             sampler=SubsetSequentialSampler(subset), 
-                                            pin_memory=True, drop_last=drop_flag)
+                                            pin_memory=True, drop_last=drop_flag, num_workers=4)
                     dataloaders  = {'train': lab_loader, 'train2': lab_loader2, 
                                     'test': test_loader, 'unlabeled': unlab_loader, 'unlabeled2': unlab_loader2}
             else:

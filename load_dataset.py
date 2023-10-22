@@ -120,7 +120,7 @@ class MyDataset(Dataset):
     def __init__(self, dataset_name, train_flag, transf):
         self.dataset_name = dataset_name
         if self.dataset_name == "cifar10":
-            self.cifar10 = CIFAR10('../cifar10', train=train_flag, 
+            self.cifar10 = CIFAR10('./cifar10', train=train_flag, 
                                     download=True, transform=transf)
         if self.dataset_name == "cifar100":
             self.cifar100 = CIFAR100('../cifar100', train=train_flag, 
@@ -234,18 +234,18 @@ def load_dataset(dataset, add_ssl=False):
     data_train2, data_unlabeled2 = [], []
         # cifar100_train_transform
     if dataset == 'cifar10': 
-        data_train = CIFAR10('../cifar10', train=True, download=True, transform=cifar10_train_transform)
+        data_train = CIFAR10('./cifar10', train=True, download=True, transform=cifar10_train_transform)
         if add_ssl:
-            data_train2 = CIFAR10('../cifar10', train=True, download=True, transform=cifar10_train_transform2)
+            data_train2 = CIFAR10('./cifar10', train=True, download=True, transform=cifar10_train_transform2)
             data_unlabeled2 = MyDataset(dataset, True, cifar10_train_transform2)
         data_unlabeled = MyDataset(dataset, True, cifar10_test_transform)
-        data_test  = CIFAR10('../cifar10', train=False, download=True, transform=cifar10_test_transform)
+        data_test  = CIFAR10('./cifar10', train=False, download=True, transform=cifar10_test_transform)
         NO_CLASSES = 10
         #adden = ADDENDUM
         no_train = 50000
     
     elif dataset == 'cifar10im': 
-        data_train = CIFAR10('../cifar10', train=True, download=True, transform=cifar10_train_transform)
+        data_train = CIFAR10('./cifar10', train=True, download=True, transform=cifar10_train_transform)
 
         #data_unlabeled   = CIFAR10('../cifar10', train=True, download=True, transform=test_transform)
         targets = np.array(data_train.targets)
@@ -265,12 +265,12 @@ def load_dataset(dataset, add_ssl=False):
         data_unlabeled.cifar10.data = data_unlabeled.cifar10.data[imb_class_idx]
 
         if add_ssl:
-            data_train2 = CIFAR10('../cifar10', train=True, download=True, transform=cifar10_train_transform2)
+            data_train2 = CIFAR10('./cifar10', train=True, download=True, transform=cifar10_train_transform2)
             data_train2.targets = targets[imb_class_idx]
             data_unlabeled2 = MyDataset(dataset[:-2], True, cifar10_train_transform2)
             data_unlabeled2.cifar10.targets = targets[imb_class_idx]
             data_unlabeled2.cifar10.data = data_unlabeled2.cifar10.data[imb_class_idx]
-        data_test  = CIFAR10('../cifar10', train=False, download=True, transform=cifar10_test_transform)
+        data_test  = CIFAR10('./cifar10', train=False, download=True, transform=cifar10_test_transform)
         NO_CLASSES = 10
         #adden = ADDENDUM
 

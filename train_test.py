@@ -189,7 +189,7 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
     models['classifier'].eval()
 
     if epoch > 1:
-        state_dict = torch.load('models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
+        state_dict = torch.load('./MoBYv2AL/models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
         # state_dict = checkpoint['state_dict']
         for k in list(state_dict.keys()):
             # retain only encoder_q up to before the embedding layer
@@ -211,7 +211,7 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
     models['classifier'].eval()
     if epoch > 1:
         models_b.load_state_dict(state_dict, strict=False)
-        models['classifier'].load_state_dict(torch.load('models/classifierhcss_%s_%d.pth'%(args.dataset,cycle)))
+        models['classifier'].load_state_dict(torch.load('./MoBYv2AL/models/classifierhcss_%s_%d.pth'%(args.dataset,cycle)))
     models_b.eval()
     total = 0
     correct = 0
@@ -321,7 +321,7 @@ def train(models, method, criterion, optimizers, schedulers, dataloaders, num_ep
             else:
                 if best_acc < acc:
                     best_acc = acc
-                    torch.save(models['backbone'].state_dict(), 'models/backbone.pth')
+                    torch.save(models['backbone'].state_dict(), './MoBYv2AL/models/backbone.pth')
                 print('Val Acc: {:.3f} \t Best Acc: {:.3f}'.format(acc, best_acc))
     print('>> Finished.')
     return best_acc
@@ -361,8 +361,8 @@ def train_with_ssl(models, method, criterion, optimizers, schedulers, dataloader
                            epoch_loss, args, l_lab, l_ulab, cycle):
     print('>> Train a Model.')
     best_acc = 0.
-    if os.path.isfile('models/ssl_backbone.pth'):
-        models['backbone'].load_state_dict(torch.load('models/ssl_backbone.pth'))
+    if os.path.isfile('./MoBYv2AL/models/ssl_backbone.pth'):
+        models['backbone'].load_state_dict(torch.load('./MoBYv2AL/models/ssl_backbone.pth'))
     for epoch in range(num_epochs):
 
         best_loss = torch.tensor([99]).cuda()
@@ -378,7 +378,7 @@ def train_with_ssl(models, method, criterion, optimizers, schedulers, dataloader
                 best_acc = acc
             if best_loss > loss:
                 best_loss = loss
-                torch.save(models['backbone'].state_dict(), 'models/ssl_backbone.pth' )
+                torch.save(models['backbone'].state_dict(), './MoBYv2AL/models/ssl_backbone.pth' )
                 
 
             print('Val Acc: {:.3f} \t Best Acc: {:.3f}'.format(acc, best_acc))
@@ -445,13 +445,13 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
             # acc = test_with_ssl(models, epoch, method, dataloaders, args, mode='test')
             # print(loss.item())
             # if epoch == 1:
-            torch.save(models['backbone'].state_dict(), 'models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
-            torch.save(models['classifier'].state_dict(), 'models/classifierhcss_%s_%d.pth'%(args.dataset,cycle))
+            torch.save(models['backbone'].state_dict(), './MoBYv2AL/models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
+            torch.save(models['classifier'].state_dict(), './MoBYv2AL/models/classifierhcss_%s_%d.pth'%(args.dataset,cycle))
 
             acc = test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode='test')
             if best_acc < acc:
-                torch.save(models['backbone'].state_dict(), 'models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
-                torch.save(models['classifier'].state_dict(), 'models/classifierhcss_%s_%d.pth'%(args.dataset,cycle))
+                torch.save(models['backbone'].state_dict(), './MoBYv2AL/models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
+                torch.save(models['classifier'].state_dict(), './MoBYv2AL/models/classifierhcss_%s_%d.pth'%(args.dataset,cycle))
                 best_acc = acc
 
             print('Acc: {:.3f} \t Best Acc: {:.3f}'.format(acc, best_acc))
@@ -467,7 +467,7 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
     k_var = 2
     c_loss_m = np.zeros((k_var, args.batch*len(dataloaders['unlabeled'])))
 
-    state_dict = torch.load('models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
+    state_dict = torch.load('./MoBYv2AL/models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
 
     for k in list(state_dict.keys()):
         # retain only encoder_q up to before the embedding layer

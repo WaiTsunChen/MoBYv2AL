@@ -149,8 +149,8 @@ if __name__ == '__main__':
 
         lab_loader = DataLoader(data_train, batch_size=BATCH, 
                                     sampler=SubsetSequentialSampler(labeled_set), 
-                                    pin_memory=True, drop_last=drop_flag)
-        test_loader  = DataLoader(data_test, batch_size=BATCH, drop_last=drop_flag)
+                                    pin_memory=True, drop_last=drop_flag, num_workers=4)
+        test_loader  = DataLoader(data_test, batch_size=BATCH, drop_last=drop_flag, num_workers=4)
         if args.ssl:
             lab_loader2 = DataLoader(data_train2, batch_size=BATCH, 
                                     sampler=SubsetSequentialSampler(labeled_set), 
@@ -304,8 +304,11 @@ if __name__ == '__main__':
 
                 optimizers = {'backbone': optim_backbone, 'classifier': optim_classifier}
                 schedulers = {'backbone': sched_backbone, 'classifier': sched_classifier} 
-          
-            # Training and testing
+            #print('BACKBONE')
+            #print(models['backbone'])
+            #print('CLASSIFIER')
+            
+            #Training and testing
 
             if args.ssl:
                 if args.total:

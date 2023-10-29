@@ -264,8 +264,8 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
                 labels = labels.cuda()
 
                 _, feat, _ = models['backbone'](inputs,inputs,labels)
-                test_features_list.append(feat)
-                test_labels_list.append(labels)
+                test_features_list.append(feat.detach().cpu())
+                test_labels_list.append(labels.detach().cpu())
                 # feat = models_b(inputs)
                 scores = models['classifier'](feat)
                 _, preds = torch.max(scores.data, 1)

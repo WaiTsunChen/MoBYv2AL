@@ -9,6 +9,11 @@ from torch.utils.data import DataLoader
 from sampler import SubsetSequentialSampler
 from models.lenet import LeNet5
 from kcenterGreedy import kCenterGreedy
+import wandb
+from sklearn.manifold import TSNE
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 ##
 # Loss Prediction Loss
@@ -183,6 +188,29 @@ def test_with_ssl2(models, epoch, method, dataloaders, args, mode='val'):
         
         return 100 * correct / total
 
+# write method to log the results
+def wandb_log_features(test_feature_list,test_labels_list):
+    tsne = TSNE(n_components=2, random_state=1234)
+    tsne_embeddings = tsne.fit_transform(test_feature_list)
+    d = {
+        "feature_1": tsne_embeddings[:, 0],
+        "feature_2": tsne_embeddings[:, 1],
+        "index": np.arange(len(tsne_embeddings)),
+        "labels ": test_labels_list,
+    }
+    d = pd.DataFrame(data=d)
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    sns.scatterplot(
+        data=d,
+        x="feature_1",
+        y="feature_2",
+        hue="labels",
+        ax=ax,
+        s=10,
+    )
+    wandb.log({"tsne": wandb.Image(fig, caption="test_data")})
+
 def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode='val'):
     assert mode == 'val' or mode == 'test'
     models['backbone'].eval()
@@ -215,6 +243,7 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
     models_b.eval()
     total = 0
     correct = 0
+    test_features_list, test_labels_list = [], []
     if args.dataset =="rafd" :
         with torch.no_grad():
             for inputs, labels, _ in dataloaders[mode]:
@@ -235,12 +264,18 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
                 labels = labels.cuda()
 
                 _, feat, _ = models['backbone'](inputs,inputs,labels)
+                test_features_list.append(feat)
+                test_labels_list.append(labels)
                 # feat = models_b(inputs)
                 scores = models['classifier'](feat)
                 _, preds = torch.max(scores.data, 1)
                 total += labels.size(0)
                 correct += (preds == labels).sum().item()
 
+        test_features_list = torch.cat(test_features_list, dim=0)
+        test_labels_list = torch.cat(test_labels_list, dim=0)
+        wandb_log_features(test_features_list,test_labels_list)
+        
         
         return 100 * correct / total
 

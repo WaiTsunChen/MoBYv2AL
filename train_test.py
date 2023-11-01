@@ -64,12 +64,15 @@ def test(models, epoch, method, dataloaders, args, mode='val'):
     else:
         with torch.no_grad():
             total_loss = 0
+            test_features_list, test_labels_list = [], []
             for (inputs, labels) in dataloaders[mode]:
                 
                 inputs = inputs.cuda()
                 labels = labels.cuda()
 
-                scores, _,_ = models['backbone'](inputs)
+                scores, feat,_ = models['backbone'](inputs)
+                test_features_list.append(feat.detach().cpu())
+                test_labels_list.append(labels.detach().cpu())
                 # output = F.log_softmax(scores, dim=1)
                 # loss =  F.nll_loss(output, labels, reduction="sum")
                 _, preds = torch.max(scores.data, 1)
@@ -78,6 +81,10 @@ def test(models, epoch, method, dataloaders, args, mode='val'):
                 total += labels.size(0)
                 correct += (preds == labels).sum().item()
                 # correct += preds.eq(labels).sum()
+
+        test_features_list = torch.cat(test_features_list, dim=0)
+        test_labels_list = torch.cat(test_labels_list, dim=0)
+        wandb_log_features(test_features_list,test_labels_list)
         
         return 100 * correct / total
 
@@ -196,7 +203,7 @@ def wandb_log_features(test_feature_list,test_labels_list):
         "feature_1": tsne_embeddings[:, 0],
         "feature_2": tsne_embeddings[:, 1],
         "index": np.arange(len(tsne_embeddings)),
-        "labels ": test_labels_list,
+        "labels": test_labels_list,
     }
     d = pd.DataFrame(data=d)
 

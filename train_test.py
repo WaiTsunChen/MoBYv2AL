@@ -215,6 +215,7 @@ def wandb_log_features(test_feature_list,test_labels_list):
         hue="labels",
         ax=ax,
         s=10,
+        palette='tab10'
     )
     wandb.log({"tsne": wandb.Image(fig, caption="test_data")})
 
@@ -271,8 +272,8 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
                 labels = labels.cuda()
 
                 _, feat, _ = models['backbone'](inputs,inputs,labels)
-                test_features_list.append(feat.detach().cpu())
-                test_labels_list.append(labels.detach().cpu())
+                test_features_list.append(feat.detach().cpu().squeeze())
+                test_labels_list.append(labels.detach().cpu().squeeze())
                 # feat = models_b(inputs)
                 scores = models['classifier'](feat)
                 _, preds = torch.max(scores.data, 1)

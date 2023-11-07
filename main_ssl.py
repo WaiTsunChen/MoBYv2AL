@@ -341,7 +341,8 @@ if __name__ == '__main__':
                 # Get the indices of the unlabeled samples to train on next cycle
                 if (args.method_type != "mobyv2al"):
                     arg = query_samples(models, method, data_unlabeled, subset, labeled_set, cycle, args, drop_flag, ADDENDUM)
-
+                # random sampling
+#                arg = np.random.randint(len(subset), size=len(subset))
                 # Update the labeled dataset and the unlabeled dataset, respectively
                 labeled_set += list(torch.tensor(subset)[arg][-ADDENDUM:].numpy())
                 dataloaders['train'] = DataLoader(data_train, batch_size=BATCH, 

@@ -2,6 +2,7 @@ import glob
 import os
 import random
 import numpy as np
+import pandas as pd
 import glob
 from PIL import Image, ImageOps, ImageFilter
 from torch.utils.data import Dataset
@@ -9,6 +10,7 @@ from torch.utils.data import Dataset
 import torchvision.transforms as T
 from torchvision.datasets import CIFAR100, CIFAR10, FashionMNIST, SVHN
 from torchvision import datasets
+import torch
 # from timm.data.transforms import _pil_interp
 
 class CustomImageFolder(datasets.ImageFolder):
@@ -116,6 +118,45 @@ class intelDataset(Dataset):
         target = self.labels[idx]
         return img, target, idx
 
+class BoundingBoxImageLoader(Dataset):
+    """Animal Bounding Box Crop."""
+
+    def __init__(self, pickle_file, root_dir, transform=None):
+        """
+        Args:
+            csv_file (string): Path to the csv file with annotations.
+            root_dir (string): Directory with all the images.
+            transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        self.dataframe = pd.read_pickle(pickle_file)
+        self.root_dir = root_dir
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.dataframe)
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        img_name = os.path.join(self.root_dir,
+                                self.dataframe.iloc[idx, 0]+'.JPG')
+
+        image = Image.open(img_name)
+    
+        bbox_im = self.dataframe.iloc[idx, 1]
+        image_croped = T.functional.crop(
+            image, int(bbox_im[1]), int(bbox_im[0]), int(bbox_im[3]), int(bbox_im[2])) # top, left, height, width
+        
+        sample = image_croped
+        target = self.dataframe.iloc[idx, 2]
+        
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample, target, idx
+
 class MyDataset(Dataset):
     def __init__(self, dataset_name, train_flag, transf):
         self.dataset_name = dataset_name
@@ -163,6 +204,12 @@ def load_dataset(dataset, add_ssl=False):
     elif dataset == 'cifar100':
         normalize = T.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
         IMG_SIZE = 32
+    elif dataset == 'SnapshotSerengeti10':
+        normalize = T.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
+        IMG_SIZE = 128
+    elif dataset == 'SnapshotSerengeti':
+        normalize == T.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
+        IMG_SIZE = 128
     else:
         normalize = T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         IMG_SIZE = 32
@@ -186,6 +233,18 @@ def load_dataset(dataset, add_ssl=False):
                             T.ToTensor(),
                         ])
 
+    snapshotserengeti10_train_transform = T.Compose([
+        T.RandomHorizontalFlip(0.5),
+        T.RandomCrop(size=IMG_SIZE, padding=4),
+        T.ToTensor(),
+        normalize
+    ])
+    snapshotserengeti_train_transform = T.Compose([
+        T.RandomHorizontalFlip(0.5),
+        T.RandomCrop(size=IMG_SIZE, padding=4),
+        T.ToTensor(),
+        normalize
+    ])
 
     if add_ssl:
         # Strong augmentations
@@ -216,6 +275,9 @@ def load_dataset(dataset, add_ssl=False):
         cifar10_train_transform2 = transform_2 
         # cifar100_train_transform1= transform
         cifar100_train_transform2  = transform_2 
+
+        snapshotserengeti10_train_transform2 = transform_2
+        snapshotserengeti_train_transform2 = transform_2
     
     # Test augmentations
     cifar100_test_transform = T.Compose([
@@ -223,6 +285,14 @@ def load_dataset(dataset, add_ssl=False):
         normalize
     ])
     cifar10_test_transform = T.Compose([
+        T.ToTensor(),
+        normalize
+    ])
+    snapshotserengeti10_test_transform = T.Compose([
+        T.ToTensor(),
+        normalize
+    ])
+    snapshotserengeti_test_transform = T.Compose([
         T.ToTensor(),
         normalize
     ])
@@ -336,8 +406,34 @@ def load_dataset(dataset, add_ssl=False):
         NO_CLASSES = 5
         #adden = 100
         
-
-
+    elif dataset == 'SnapshotSerengeti10':
+        data_train = BoundingBoxImageLoader(
+            pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_balanced_top_10_metadata_train.df',
+            root_dir=os.environ['DATA_DDIR_PATH'],
+            transform=snapshotserengeti10_train_transform)
+        
+        data_unlabeled = BoundingBoxImageLoader(
+            pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_balanced_top_10_metadata_train.df',
+            root_dir=os.environ['DATA_DDIR_PATH'],
+            transform=snapshotserengeti10_train_transform)
+        data_test = BoundingBoxImageLoader(
+            pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_balanced_top_10_metadata_test.df',
+            root_dir=os.environ['DATA_DDIR_PATH'],
+            transform=snapshotserengeti10_test_transform)
+        if add_ssl:
+            data_train2 = BoundingBoxImageLoader(
+                pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_balanced_top_10_metadata_train.df',
+                root_dir=os.environ['DATA_DDIR_PATH'],
+                transform=snapshotserengeti10_train_transform2)
+            data_unlabeled2 = BoundingBoxImageLoader(
+                pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_balanced_top_10_metadata_train.df',
+                root_dir=os.environ['DATA_DDIR_PATH'],
+                transform=snapshotserengeti10_train_transform2)
+        NO_CLASSES = 10
+        no_train = 175000
+    
+    elif dataset == 'SnapshotSerengeti':
+        pass
     return data_train, data_unlabeled, data_test, NO_CLASSES, no_train, data_train2, data_unlabeled2
 
 class DataAugmentationDINO(object):

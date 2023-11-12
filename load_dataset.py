@@ -4,7 +4,7 @@ import random
 import numpy as np
 import pandas as pd
 import glob
-from PIL import Image, ImageOps, ImageFilter
+from PIL import Image, ImageOps, ImageFilter, ImageFile
 from torch.utils.data import Dataset
 #from config import *
 import torchvision.transforms as T
@@ -13,6 +13,7 @@ from torchvision import datasets
 import torch
 # from timm.data.transforms import _pil_interp
 
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 class CustomImageFolder(datasets.ImageFolder):
     def __getitem__(self, index):
         """
@@ -121,7 +122,7 @@ class intelDataset(Dataset):
 class BoundingBoxImageLoader(Dataset):
     """Animal Bounding Box Crop."""
 
-    def __init__(self, pickle_file, root_dir, transform=None):
+    def __init__(self, pickle_file, root_dir, transform=None, is_test=False):
         """
         Args:
             csv_file (string): Path to the csv file with annotations.
@@ -132,6 +133,7 @@ class BoundingBoxImageLoader(Dataset):
         self.dataframe = pd.read_pickle(pickle_file)
         self.root_dir = root_dir
         self.transform = transform
+        self.is_test = is_test
 
     def __len__(self):
         return len(self.dataframe)
@@ -154,7 +156,8 @@ class BoundingBoxImageLoader(Dataset):
         
         if self.transform:
             sample = self.transform(sample)
-
+        if self.is_test:
+            return sample, target
         return sample, target, idx
 
 class MyDataset(Dataset):
@@ -206,7 +209,7 @@ def load_dataset(dataset, add_ssl=False):
         IMG_SIZE = 32
     elif dataset == 'SnapshotSerengeti10':
         normalize = T.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
-        IMG_SIZE = 128
+        IMG_SIZE = 32
     elif dataset == 'SnapshotSerengeti':
         normalize == T.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
         IMG_SIZE = 128
@@ -235,12 +238,14 @@ def load_dataset(dataset, add_ssl=False):
 
     snapshotserengeti10_train_transform = T.Compose([
         T.RandomHorizontalFlip(0.5),
+        T.Resize((IMG_SIZE,IMG_SIZE)),
         T.RandomCrop(size=IMG_SIZE, padding=4),
         T.ToTensor(),
         normalize
     ])
     snapshotserengeti_train_transform = T.Compose([
         T.RandomHorizontalFlip(0.5),
+        T.Resize((IMG_SIZE,IMG_SIZE)),
         T.RandomCrop(size=IMG_SIZE, padding=4),
         T.ToTensor(),
         normalize
@@ -289,10 +294,12 @@ def load_dataset(dataset, add_ssl=False):
         normalize
     ])
     snapshotserengeti10_test_transform = T.Compose([
+        T.Resize((IMG_SIZE,IMG_SIZE)),
         T.ToTensor(),
         normalize
     ])
     snapshotserengeti_test_transform = T.Compose([
+        T.Resize((IMG_SIZE,IMG_SIZE)),
         T.ToTensor(),
         normalize
     ])
@@ -409,25 +416,26 @@ def load_dataset(dataset, add_ssl=False):
     elif dataset == 'SnapshotSerengeti10':
         data_train = BoundingBoxImageLoader(
             pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_balanced_top_10_metadata_train.df',
-            root_dir=os.environ['DATA_DDIR_PATH'],
+            root_dir=os.environ['DATA_DIR_PATH'],
             transform=snapshotserengeti10_train_transform)
         
         data_unlabeled = BoundingBoxImageLoader(
             pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_balanced_top_10_metadata_train.df',
-            root_dir=os.environ['DATA_DDIR_PATH'],
+            root_dir=os.environ['DATA_DIR_PATH'],
             transform=snapshotserengeti10_train_transform)
         data_test = BoundingBoxImageLoader(
             pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_balanced_top_10_metadata_test.df',
-            root_dir=os.environ['DATA_DDIR_PATH'],
-            transform=snapshotserengeti10_test_transform)
+            root_dir=os.environ['DATA_DIR_PATH'],
+            transform=snapshotserengeti10_test_transform,
+            is_test=True)
         if add_ssl:
             data_train2 = BoundingBoxImageLoader(
                 pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_balanced_top_10_metadata_train.df',
-                root_dir=os.environ['DATA_DDIR_PATH'],
+                root_dir=os.environ['DATA_DIR_PATH'],
                 transform=snapshotserengeti10_train_transform2)
             data_unlabeled2 = BoundingBoxImageLoader(
                 pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_balanced_top_10_metadata_train.df',
-                root_dir=os.environ['DATA_DDIR_PATH'],
+                root_dir=os.environ['DATA_DIR_PATH'],
                 transform=snapshotserengeti10_train_transform2)
         NO_CLASSES = 10
         no_train = 175000

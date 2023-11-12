@@ -75,14 +75,14 @@ if __name__ == '__main__':
     BATCH = args.batch
     TRIALS = args.trials
     methods = ['Random', 'CoreSet', 'mobyv2al']
-    datasets = ['cifar10', 'cifar100', 'fashionmnist','svhn','svhn5']
+    datasets = ['cifar10', 'cifar100', 'fashionmnist','svhn','svhn5','SnapshotSerengeti10']
     learner_models = ["vgg16","resnet18","lenet5","wideresnet28"]
     assert method in methods, 'No method %s! Try options %s'%(method, methods)
     assert args.dataset in datasets, 'No dataset %s! Try options %s'%(args.dataset, datasets)
     '''
     method_type: 'Random', 'CoreSet', 'mobyv2al'
     '''
-
+    NUM_WORKERS = int(os.environ['NUM_WORKERS'])
     results = open('results_'+str(args.method_type)+"_"+args.dataset +'_main'+str(args.cycles)+
                     str(args.total)+'.txt','w')
     print("Dataset: %s"%args.dataset)
@@ -154,8 +154,8 @@ if __name__ == '__main__':
 
             lab_loader = DataLoader(data_train, batch_size=BATCH, 
                                         sampler=SubsetSequentialSampler(labeled_set), 
-                                        pin_memory=True, drop_last=drop_flag, num_workers=4)
-            test_loader  = DataLoader(data_test, batch_size=BATCH, drop_last=drop_flag, num_workers=4)
+                                        pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS)
+            test_loader  = DataLoader(data_test, batch_size=BATCH, drop_last=drop_flag, num_workers=NUM_WORKERS)
             if args.ssl:
                 lab_loader2 = DataLoader(data_train2, batch_size=BATCH, 
                                         sampler=SubsetSequentialSampler(labeled_set), 
@@ -225,16 +225,16 @@ if __name__ == '__main__':
                     if args.ssl:
                         lab_loader = DataLoader(data_train, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(interleaved), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=4)
+                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS)
                         lab_loader2 = DataLoader(data_train2, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(interleaved), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=4)
+                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS)
                         unlab_loader2 = DataLoader(data_unlabeled2, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(subset), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=4)
+                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS)
                         unlab_loader = DataLoader(data_unlabeled, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(subset), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=4)
+                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS)
                         dataloaders  = {'train': lab_loader, 'train2': lab_loader2, 
                                         'test': test_loader, 'unlabeled': unlab_loader, 'unlabeled2': unlab_loader2}
                 else:

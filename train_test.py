@@ -267,7 +267,6 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
         with torch.no_grad():
             total_loss = 0
             for (inputs, labels) in dataloaders[mode]:
-                
                 inputs = inputs.cuda()
                 labels = labels.cuda()
 
@@ -282,6 +281,13 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
 
         test_features_list = torch.cat(test_features_list, dim=0)
         test_labels_list = torch.cat(test_labels_list, dim=0)
+        # Number of elements to sample
+        num_samples = 5000
+        # Generate random indices
+        random_indices = torch.randperm(test_features_list.size(0))[:num_samples]
+        # Sample elements using the random indices
+        test_features_list = test_features_list[random_indices]
+        test_labels_list = test_labels_list[random_indices]
         wandb_log_features(test_features_list,test_labels_list)
         
         
@@ -532,7 +538,7 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
     models_b.eval()
     combined_dataset = DataLoader(data_train, batch_size=args.batch, 
                                     sampler=SubsetSequentialSampler(unlabeled_data+labeled_data), 
-                                    pin_memory=True, drop_last=False)
+                                    pin_memory=True, drop_last=False, num_workers = int(os.environ['NUM_WORKERS']))
 
     for ulab_data in combined_dataset:
         

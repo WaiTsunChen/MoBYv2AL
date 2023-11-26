@@ -54,6 +54,8 @@ parser.add_argument("-la","--learner_architecture", type=str, default="resnet18"
                     help="")
 parser.add_argument("-b","--batch", type=int, default=128,
                     help="Batch size used for training")
+parser.add_argument("-ims","--image_size", type=int, default=32,
+                    help="Size of the image")
 args = parser.parse_args()
 
 ##
@@ -99,7 +101,7 @@ if __name__ == '__main__':
         for trial in range(TRIALS):
 
             # Load training and testing dataset
-            data_train, data_unlabeled, data_test, NO_CLASSES, no_train, data_train2, data_unlabeled2 = load_dataset(args.dataset, args.ssl)
+            data_train, data_unlabeled, data_test, NO_CLASSES, no_train, data_train2, data_unlabeled2 = load_dataset(args.dataset, args.ssl, args.image_size)
                     
             print(len(data_train))
 
@@ -225,16 +227,20 @@ if __name__ == '__main__':
                     if args.ssl:
                         lab_loader = DataLoader(data_train, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(interleaved), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS)
+                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS, 
+                                                prefetch_factor=2)
                         lab_loader2 = DataLoader(data_train2, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(interleaved), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS)
+                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS,
+                                                prefetch_factor=2)
                         unlab_loader2 = DataLoader(data_unlabeled2, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(subset), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS)
+                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS, 
+                                                prefetch_factor=2)
                         unlab_loader = DataLoader(data_unlabeled, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(subset), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS)
+                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS,
+                                                prefetch_factor=2)
                         dataloaders  = {'train': lab_loader, 'train2': lab_loader2, 
                                         'test': test_loader, 'unlabeled': unlab_loader, 'unlabeled2': unlab_loader2}
                 else:

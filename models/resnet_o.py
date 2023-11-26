@@ -184,7 +184,7 @@ class ResNetEnc(nn.Module):
     def __init__(self, block, num_blocks, num_classes=10, avg_pool=4):
         super(ResNetEnc, self).__init__()
         self.in_planes = 64
-        self.avg_pool = avg_pool
+        self.avg_pool = 8#avg_pool#16
         self.num_features = 512
         sblock=TanhBlurBlock 
         num_sblocks=(0, 0, 0, 0)
@@ -229,19 +229,21 @@ class ResNetEnc(nn.Module):
 
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))
+#        print(f'before layer1: {out.shape}')
         out1 = self.layer1(out)
         out1 = self.smooth0(out1)
-
+#        print(f'before layer2: {out1.shape}')
         out2 = self.layer2(out1)
         out2 = self.smooth1(out2)
-
+#        print(f'before layer3: {out2.shape}')
         out3 = self.layer3(out2)
         out3 = self.smooth2(out3)
-
+#        print(f'before layer4: {out3.shape}')
         out4 = self.layer4(out3)
         out4 = self.smooth3(out4)
-
+#        print(f'pooling layer: {out4.shape}')
         out = F.avg_pool2d(out4, self.avg_pool)
+#        print(f'after pooing layer: {out.shape}')
         # outf = out.view(out.size(0), -1)
         self.num_features = out.shape[1]
         # outl = self.linear(outf)

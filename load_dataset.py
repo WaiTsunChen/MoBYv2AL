@@ -11,9 +11,11 @@ import torchvision.transforms as T
 from torchvision.datasets import CIFAR100, CIFAR10, FashionMNIST, SVHN
 from torchvision import datasets
 import torch
+import torchvision
 # from timm.data.transforms import _pil_interp
-
+#import pyvips
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+torchvision.set_image_backend('accimage')
 class CustomImageFolder(datasets.ImageFolder):
     def __getitem__(self, index):
         """
@@ -146,7 +148,8 @@ class BoundingBoxImageLoader(Dataset):
                                 self.dataframe.iloc[idx, 0]+'.JPG')
 
         image = Image.open(img_name)
-    
+        #image = Image.new('RGB',(128, 128))
+        #image = pyvips.Image.new_from_file(img_name, access='sequential')
         bbox_im = self.dataframe.iloc[idx, 1]
         image_croped = T.functional.crop(
             image, int(bbox_im[1]), int(bbox_im[0]), int(bbox_im[3]), int(bbox_im[2])) # top, left, height, width
@@ -200,22 +203,22 @@ class MyDataset(Dataset):
 ##
 
 # Data
-def load_dataset(dataset, add_ssl=False):
+def load_dataset(dataset, add_ssl=False, image_size=32):
     if dataset == 'cifar10' or dataset == 'cifar10im':
         normalize = T.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010])
-        IMG_SIZE = 32
+        IMG_SIZE = image_size
     elif dataset == 'cifar100':
         normalize = T.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
-        IMG_SIZE = 32
+        IMG_SIZE = image_size
     elif dataset == 'SnapshotSerengeti10':
         normalize = T.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
-        IMG_SIZE = 32
+        IMG_SIZE = image_size
     elif dataset == 'SnapshotSerengeti':
         normalize == T.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
-        IMG_SIZE = 128
+        IMG_SIZE = image_size
     else:
         normalize = T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        IMG_SIZE = 32
+        IMG_SIZE = image_size
     # Weak augmentations
     cifar100_train_transform = T.Compose([
         T.RandomHorizontalFlip(0.5),

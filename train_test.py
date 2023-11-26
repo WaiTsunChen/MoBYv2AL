@@ -6,6 +6,7 @@ from tqdm import tqdm
 import numpy as np
 import models.resnet_o as resnet
 from torch.utils.data import DataLoader
+from torchvision import transforms
 from sampler import SubsetSequentialSampler
 from models.lenet import LeNet5
 from kcenterGreedy import kCenterGreedy
@@ -14,7 +15,9 @@ from sklearn.manifold import TSNE
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-
+from torch.profiler import profile, record_function, ProfilerActivity
+from sklearn.metrics import confusion_matrix
+from PIL import Image
 ##
 # Loss Prediction Loss
 # CUDA_VISIBLE_DEVICES = int(os.environ['CUDA_VISIBLE_DEVICES'])
@@ -196,7 +199,7 @@ def test_with_ssl2(models, epoch, method, dataloaders, args, mode='val'):
         return 100 * correct / total
 
 # write method to log the results
-def wandb_log_features(test_feature_list,test_labels_list):
+def wandb_log_features(test_feature_list,test_labels_list,test_images_list,epoch):
     tsne = TSNE(n_components=2, random_state=1234)
     tsne_embeddings = tsne.fit_transform(test_feature_list)
     d = {
@@ -204,6 +207,7 @@ def wandb_log_features(test_feature_list,test_labels_list):
         "feature_2": tsne_embeddings[:, 1],
         "index": np.arange(len(tsne_embeddings)),
         "labels": test_labels_list,
+        "images": list(test_images_list),
     }
     d = pd.DataFrame(data=d)
 
@@ -218,7 +222,35 @@ def wandb_log_features(test_feature_list,test_labels_list):
         palette='tab10'
     )
     wandb.log({"tsne": wandb.Image(fig, caption="test_data")})
+    
+    if epoch == 201:
+        tx, ty = d.feature_1, d.feature_2
+        tx = (tx-np.min(tx)) / (np.max(tx) - np.min(tx))
+        ty = (ty-np.min(ty)) / (np.max(ty) - np.min(ty))
 
+        width = 3000
+        height = 3000
+        max_dim = 32
+        full_image = Image.new('RGB', (width, height))
+        mean = [0.5071, 0.4867, 0.4408]
+        std = [0.2675, 0.2565, 0.2761]
+        #mean = [0.4914, 0.4822, 0.4465]
+        #std = [0.2023, 0.1994, 0.2010]
+        unnormalize = transforms.Normalize(mean=[-m/s for m, s in zip(mean, std)], std=[1/s for s in std])
+        for i in range(len(d)):
+            image = d.iloc[i].images
+            image = unnormalize(image)
+            image = np.transpose(image,(1,2,0))
+            #print(image.shape)
+            tile = Image.fromarray(np.uint8(image*255),'RGB')
+            rs = max(1, tile.width / max_dim, tile.height / max_dim)
+            tile = tile.resize((int(tile.width / rs),
+                        int(tile.height / rs)),
+                        Image.LANCZOS)
+            full_image.paste(tile, (int((width-max_dim) * tx[i]),
+                            int((height-max_dim) * ty[i])))
+        
+        wandb.log({"tsne": wandb.Image(full_image,caption='og images')})
 def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode='val'):
     assert mode == 'val' or mode == 'test'
     models['backbone'].eval()
@@ -251,7 +283,7 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
     models_b.eval()
     total = 0
     correct = 0
-    test_features_list, test_labels_list = [], []
+    test_features_list, test_labels_list, test_images_list, Y_PRED = [], [], [], []
     if args.dataset =="rafd" :
         with torch.no_grad():
             for inputs, labels, _ in dataloaders[mode]:
@@ -271,16 +303,23 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
                 labels = labels.cuda()
 
                 _, feat, _ = models['backbone'](inputs,inputs,labels)
-                test_features_list.append(feat.detach().cpu().squeeze())
-                test_labels_list.append(labels.detach().cpu().squeeze())
+                if len(test_features_list) <10000:
+                    test_features_list.append(feat.detach().cpu().squeeze())
+                    test_labels_list.append(labels.detach().cpu().squeeze())
+                    test_images_list.append(inputs.detach().cpu().squeeze())
                 # feat = models_b(inputs)
                 scores = models['classifier'](feat)
                 _, preds = torch.max(scores.data, 1)
                 total += labels.size(0)
                 correct += (preds == labels).sum().item()
+                if epoch == 201:
+                    Y_PRED.append(preds.detach().cpu().numpy())
 
         test_features_list = torch.cat(test_features_list, dim=0)
         test_labels_list = torch.cat(test_labels_list, dim=0)
+        print(len(test_images_list))
+        test_images_list = torch.cat(test_images_list, dim=0).reshape(-1,3,args.image_size,args.image_size)
+        print(test_images_list.shape)
         # Number of elements to sample
         num_samples = 5000
         # Generate random indices
@@ -288,8 +327,13 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
         # Sample elements using the random indices
         test_features_list = test_features_list[random_indices]
         test_labels_list = test_labels_list[random_indices]
-        wandb_log_features(test_features_list,test_labels_list)
+        test_images_list = test_images_list[random_indices]
+        wandb_log_features(test_features_list,test_labels_list,test_images_list,epoch)
         
+        if epoch ==201:
+            Y_PRED = np.concatenate(Y_PRED, axis=0)
+            Y_PRED = Y_PRED[random_indices]
+            wandb_log_confusion_matrix(Y_PRED,test_labels_list,"validation")
         
         return 100 * correct / total
 
@@ -437,6 +481,16 @@ def train_with_ssl(models, method, criterion, optimizers, schedulers, dataloader
     
     return best_acc 
 
+def wandb_log_confusion_matrix(y_pred,y_true,caption):
+    cf = confusion_matrix(y_true, y_pred, labels=np.arange(10))
+    cifar10_labeles = ["airplane","automobile","bird","cat","deer","dog","frog","horse","ship","truck",],
+    snapshot10_labeles = ['gazellegrants','zebra','gazellethomsons','impala','elephant','giraffe','buffalo','hartebeest','guineafowl','wildebeest']
+    df_cm = pd.DataFrame(cf,index=snapshot10_labeles, columns=snapshot10_labeles)
+    fig, ax = plt.subplots(figsize=(8, 8))
+    sns.heatmap(df_cm, annot=True, ax=ax)
+    wandb.log({
+        "confusion_matrix_validate": wandb.Image(fig, caption=caption),
+    })
 
 def train_epoch_ssl2(models, method, criterion, optimizers, dataloaders, 
                                         epoch, schedulers, cycle, last_inter):
@@ -446,6 +500,7 @@ def train_epoch_ssl2(models, method, criterion, optimizers, dataloaders,
     idx = 0
     num_steps = len(dataloaders['train'])
     c_loss_gain = 0.5 #- 0.05*cycle
+    Y_PRED,Y_TRUE = [],[]
     for (samples,samples_a) in tqdm(zip(dataloaders['train'],dataloaders['train2']), leave=False, total=len(dataloaders['train'])):
         
         samples_a = samples_a[0].cuda(non_blocking=True)
@@ -461,6 +516,9 @@ def train_epoch_ssl2(models, method, criterion, optimizers, dataloaders,
             c_loss = (torch.sum(contrastive_loss)) / contrastive_loss.size(0)
             loss = t_loss + c_loss_gain*c_loss
             # loss.backward()
+            if epoch ==220:
+                Y_PRED.append(np.argmax(scores.detach().cpu().numpy(),axis=1))
+                Y_TRUE.append(targets.detach().cpu().numpy())
         else:
             loss = c_loss_gain *(torch.sum(contrastive_loss)) / contrastive_loss.size(0)
         optimizers['backbone'].zero_grad()
@@ -470,7 +528,14 @@ def train_epoch_ssl2(models, method, criterion, optimizers, dataloaders,
             optimizers['classifier'].zero_grad()
             optimizers['classifier'].step()
     
+        if idx % 100 == 0:
+            wandb.log({"task loss":t_loss, "contrastive loss":c_loss})
         idx +=1
+    
+    if epoch == 220:
+        Y_PRED = np.concatenate(Y_PRED, axis=0)
+        Y_TRUE = np.concatenate(Y_TRUE, axis=0)
+        wandb_log_confusion_matrix(Y_PRED,Y_TRUE,"training")
     return loss
 
 def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloaders, num_epochs, 
@@ -481,33 +546,39 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
 
     l_lab = 0
     l_ulab = 0
-    # if not os.path.isfile('models/moby_backbone_full.pth'):
+#    with profile(activities=[
+#        ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
+ #       with record_function("model_training"):
+            # if not os.path.isfile('models/moby_backbone_full.pth'):
     for epoch in range(num_epochs):
-
+        print(f'EPOCH NUMBER: {epoch}')
         best_loss = torch.tensor([99]).cuda()
         # loss = train_epoch(models, method, criterion, optimizers, dataloaders, epoch, epoch_loss)
         loss = train_epoch_ssl2(models, method, criterion, optimizers, dataloaders, epoch, schedulers, cycle, last_inter)
         schedulers['classifier'].step(loss)
         schedulers['backbone'].step(loss)
 
-        if True and epoch % 20  == 1:
+        if True and epoch % 40  == 1:
             # acc = test_with_ssl(models, epoch, method, dataloaders, args, mode='test')
             # print(loss.item())
-            # if epoch == 1:
-            torch.save(models['backbone'].state_dict(), './MoBYv2AL/models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
+            #if epoch == 1:
+            torch.save(models['backbone'].state_dict(), './MoBYv2AL/models/backbonehcss_%s_%d.pth'%(args.dataset,cycle)) 
             torch.save(models['classifier'].state_dict(), './MoBYv2AL/models/classifierhcss_%s_%d.pth'%(args.dataset,cycle))
 
             acc = test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode='test')
+#            acc = 0
             if best_acc < acc:
                 torch.save(models['backbone'].state_dict(), './MoBYv2AL/models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
                 torch.save(models['classifier'].state_dict(), './MoBYv2AL/models/classifierhcss_%s_%d.pth'%(args.dataset,cycle))
                 best_acc = acc
 
             print('Acc: {:.3f} \t Best Acc: {:.3f}'.format(acc, best_acc))
-
+        wandb.log({"training loss":loss})
+#    print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=10))
     print('>> Finished.')
-
-
+    subset = len(unlabeled_data)
+    arg = np.random.randint(subset, size=subset)
+    return best_acc, arg
     models['classifier'].eval()
     models['backbone'].eval()
     # # 

@@ -285,11 +285,15 @@ class MoBY(nn.Module):
         return F.cross_entropy(logits, labels, reduction='none')
 
     def forward(self, im_1, im_2, targets=None):
+#        print(f'input shape: {im_1.shape}')
         feat_1 = self.encoder(im_1)  # queries: NxC
+#        print(f'feature shape: {feat_1.shape}')
         proj_1 = self.projector(torch.squeeze(feat_1))
+#        print(f'projector shape: {proj_1.shape}')
         pred_1 = self.predictor(proj_1)
+#        print(f'predictor shape: {pred_1.shape}')
         pred_1 = F.normalize(pred_1, dim=1)
-
+        
         feat_2 = self.encoder(im_2)
         proj_2 = self.projector(torch.squeeze(feat_2))
         pred_2 = self.predictor(proj_2)

@@ -146,7 +146,7 @@ class ResNet(nn.Module):
     def __init__(self, block, num_blocks, num_classes=10, avg_pool=4):
         super(ResNet, self).__init__()
         self.in_planes = 64
-        self.avg_pool = avg_pool
+        self.avg_pool = 8 #avg_pool
         self.num_features = 512
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
@@ -184,7 +184,7 @@ class ResNetEnc(nn.Module):
     def __init__(self, block, num_blocks, num_classes=10, avg_pool=4):
         super(ResNetEnc, self).__init__()
         self.in_planes = 64
-        self.avg_pool = 8#avg_pool#16
+        self.avg_pool = 8#avg_pool#8#16
         self.num_features = 512
         sblock=TanhBlurBlock 
         num_sblocks=(0, 0, 0, 0)

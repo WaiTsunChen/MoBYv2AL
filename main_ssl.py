@@ -56,6 +56,12 @@ parser.add_argument("-b","--batch", type=int, default=128,
                     help="Batch size used for training")
 parser.add_argument("-ims","--image_size", type=int, default=32,
                     help="Size of the image")
+parser.add_argument("-sst", "--sampling_strategy", type=str, default="coreset",
+                    help="sampling strategy")
+parser.add_argument("-cont","--continuation", type=str,default=None,
+                    help="continue where slurm broke off")
+parser.add_argument('-id',"--run_id",type=int,default=0,
+                    help="artifical id to identify, in case slurm breaks")
 args = parser.parse_args()
 
 ##
@@ -77,7 +83,7 @@ if __name__ == '__main__':
     BATCH = args.batch
     TRIALS = args.trials
     methods = ['Random', 'CoreSet', 'mobyv2al']
-    datasets = ['cifar10', 'cifar100', 'fashionmnist','svhn','svhn5','SnapshotSerengeti10']
+    datasets = ['cifar10', 'cifar100', 'fashionmnist','svhn','svhn5','SnapshotSerengeti10','SnapshotSerengeti']
     learner_models = ["vgg16","resnet18","lenet5","wideresnet28"]
     assert method in methods, 'No method %s! Try options %s'%(method, methods)
     assert args.dataset in datasets, 'No dataset %s! Try options %s'%(args.dataset, datasets)
@@ -101,7 +107,7 @@ if __name__ == '__main__':
         for trial in range(TRIALS):
 
             # Load training and testing dataset
-            data_train, data_unlabeled, data_test, NO_CLASSES, no_train, data_train2, data_unlabeled2 = load_dataset(args.dataset, args.ssl, args.image_size)
+            data_train, data_unlabeled, data_test, NO_CLASSES, no_train, data_train2, data_unlabeled2 = load_dataset(args.dataset, args, args.ssl, args.image_size,) 
                     
             print(len(data_train))
 
@@ -144,24 +150,28 @@ if __name__ == '__main__':
                 else:
                     ADDENDUM = 2500
                     init_margin = int(NUM_TRAIN/10)
-                    if os.path.isfile("init_set.npy"):
+                    if args.continuation: # workaround since slurm gpu usage drops down(?)
+                        labeled_set = np.load(f'./MoBYv2AL/models/{args.continuation}.npy', allow_pickle=True).tolist()
+                    # elif os.path.isfile("init_set.npy"):
                         # take 10% of the labelled data at first run for CIFAR10/100
-                        labeled_set = np.load("init_set.npy").tolist()
+                        # labeled_set = np.load("init_set.npy").tolist()
+                        # labeled_set = indices[:27500]
                     else:
                         labeled_set = indices[:5000] 
-                        np.save("init_set.npy", np.asarray(labeled_set))
+                        # labeled_set = indices[:27500]
+                        # np.save("init_set.npy", np.asarray(labeled_set))
                 print(ADDENDUM)
                 unlabeled_set = set(indices) - set(labeled_set) #[x for x in indices if x not in labeled_set]
                 unlabeled_set = list(unlabeled_set)
 
             lab_loader = DataLoader(data_train, batch_size=BATCH, 
                                         sampler=SubsetSequentialSampler(labeled_set), 
-                                        pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS)
+                                        pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS)
             test_loader  = DataLoader(data_test, batch_size=BATCH, drop_last=drop_flag, num_workers=NUM_WORKERS)
             if args.ssl:
                 lab_loader2 = DataLoader(data_train2, batch_size=BATCH, 
                                         sampler=SubsetSequentialSampler(labeled_set), 
-                                        pin_memory=True, drop_last=drop_flag)
+                                        pin_memory=False, drop_last=drop_flag)
 
                 dataloaders  = {'train': lab_loader, 'train2': lab_loader2, 'test': test_loader}
             else:
@@ -195,7 +205,7 @@ if __name__ == '__main__':
 
                 unlab_loader = DataLoader(data_unlabeled, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(subset), 
-                                                pin_memory=True, drop_last=drop_flag)
+                                                pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS)
 
                 if (args.method_type == "mobyv2al"):
                     # Interleave labelled and unlabelled batches.
@@ -224,22 +234,23 @@ if __name__ == '__main__':
                     # else:
                     #     interleaved = interleaved + labeled_set[(idx+1)*BATCH:]
                     last_interleaved = idx
+                    print(f'last interleave: {last_interleaved}')
                     if args.ssl:
                         lab_loader = DataLoader(data_train, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(interleaved), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS, 
-                                                prefetch_factor=2)
+                                                pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS, 
+                                                prefetch_factor=1)
                         lab_loader2 = DataLoader(data_train2, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(interleaved), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS,
-                                                prefetch_factor=2)
+                                                pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS,
+                                                prefetch_factor=1)
                         unlab_loader2 = DataLoader(data_unlabeled2, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(subset), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS, 
+                                                pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS, 
                                                 prefetch_factor=2)
                         unlab_loader = DataLoader(data_unlabeled, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(subset), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS,
+                                                pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS,
                                                 prefetch_factor=2)
                         dataloaders  = {'train': lab_loader, 'train2': lab_loader2, 
                                         'test': test_loader, 'unlabeled': unlab_loader, 'unlabeled2': unlab_loader2}
@@ -347,13 +358,16 @@ if __name__ == '__main__':
                 # Get the indices of the unlabeled samples to train on next cycle
                 if (args.method_type != "mobyv2al"):
                     arg = query_samples(models, method, data_unlabeled, subset, labeled_set, cycle, args, drop_flag, ADDENDUM)
+                    labeled_set += list(torch.tensor(subset)[arg][-ADDENDUM:].numpy())
+                else: # change made for mobyv2al, directly returns datapoint indices instead of position.
+                    labeled_set += list(arg)
                 # random sampling
-#                arg = np.random.randint(len(subset), size=len(subset))
+                # arg = np.random.randint(len(subset), size=len(subset))
                 # Update the labeled dataset and the unlabeled dataset, respectively
-                labeled_set += list(torch.tensor(subset)[arg][-ADDENDUM:].numpy())
+                np.save(f'./MoBYv2AL/models/{args.dataset}_{args.method_type}_{args.run_id}_npy', np.asarray(labeled_set))
                 dataloaders['train'] = DataLoader(data_train, batch_size=BATCH, 
                                             sampler=SubsetRandomSampler(labeled_set), 
-                                            pin_memory=True, drop_last=drop_flag)
+                                            pin_memory=False, drop_last=drop_flag)
                 #listd = list(torch.tensor(subset)[arg][:ADDENDUM].numpy()) 
                 unlabeled_set = [x for x in range(NUM_TRAIN) if x not in labeled_set]
                 #unlabeled_set =  [x for x in unlabeled_set if x not in listd]

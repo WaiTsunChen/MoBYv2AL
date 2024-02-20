@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 from torch.profiler import profile, record_function, ProfilerActivity
 from sklearn.metrics import confusion_matrix
 from PIL import Image
+import pickle
 ##
 # Loss Prediction Loss
 # CUDA_VISIBLE_DEVICES = int(os.environ['CUDA_VISIBLE_DEVICES'])
@@ -52,6 +53,7 @@ def test(models, epoch, method, dataloaders, args, mode='val'):
     
     total = 0
     correct = 0
+    test_features_list, test_labels_list, test_images_list = [], [], []
     if args.dataset =="rafd" :
         with torch.no_grad():
             for inputs, labels, _ in dataloaders[mode]:
@@ -67,15 +69,17 @@ def test(models, epoch, method, dataloaders, args, mode='val'):
     else:
         with torch.no_grad():
             total_loss = 0
-            test_features_list, test_labels_list = [], []
-            for (inputs, labels) in dataloaders[mode]:
+            for (inputs, labels, idx) in dataloaders[mode]:
                 
                 inputs = inputs.cuda()
                 labels = labels.cuda()
 
                 scores, feat,_ = models['backbone'](inputs)
-                test_features_list.append(feat.detach().cpu())
-                test_labels_list.append(labels.detach().cpu())
+                if len(test_features_list) < 10000:
+                    test_features_list.append(feat.detach().cpu().squeeze())
+                    test_labels_list.append(labels.detach().cpu().squeeze())
+                    test_images_list.append(inputs.detach().cpu().squeeze())
+
                 # output = F.log_softmax(scores, dim=1)
                 # loss =  F.nll_loss(output, labels, reduction="sum")
                 _, preds = torch.max(scores.data, 1)
@@ -87,7 +91,18 @@ def test(models, epoch, method, dataloaders, args, mode='val'):
 
         test_features_list = torch.cat(test_features_list, dim=0)
         test_labels_list = torch.cat(test_labels_list, dim=0)
-        wandb_log_features(test_features_list,test_labels_list)
+        print(len(test_images_list))
+        test_images_list = torch.cat(test_images_list, dim=0).reshape(-1,3,args.image_size,args.image_size)
+        print(test_images_list.shape)
+        # Number of elements to sample
+        num_samples = 5000
+        # Generate random indices
+        random_indices = torch.randperm(test_features_list.size(0))[:num_samples]
+        # Sample elements using the random indices
+        test_features_list = test_features_list[random_indices]
+        test_labels_list = test_labels_list[random_indices]
+        test_images_list = test_images_list[random_indices]
+        wandb_log_features(test_features_list,test_labels_list,test_images_list,epoch)
         
         return 100 * correct / total
 
@@ -251,7 +266,7 @@ def wandb_log_features(test_feature_list,test_labels_list,test_images_list,epoch
                             int((height-max_dim) * ty[i])))
         
         wandb.log({"tsne": wandb.Image(full_image,caption='og images')})
-def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode='val'):
+def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode='val',):
     assert mode == 'val' or mode == 'test'
     models['backbone'].eval()
     models['classifier'].eval()
@@ -298,7 +313,7 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
     else:
         with torch.no_grad():
             total_loss = 0
-            for (inputs, labels) in dataloaders[mode]:
+            for (inputs, labels, idx) in dataloaders[mode]:
                 inputs = inputs.cuda()
                 labels = labels.cuda()
 
@@ -333,7 +348,7 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
         if epoch ==201:
             Y_PRED = np.concatenate(Y_PRED, axis=0)
             Y_PRED = Y_PRED[random_indices]
-            wandb_log_confusion_matrix(Y_PRED,test_labels_list,"validation")
+            wandb_log_confusion_matrix(Y_PRED,test_labels_list,"validation",args.dataset)
         
         return 100 * correct / total
 
@@ -481,19 +496,25 @@ def train_with_ssl(models, method, criterion, optimizers, schedulers, dataloader
     
     return best_acc 
 
-def wandb_log_confusion_matrix(y_pred,y_true,caption):
-    cf = confusion_matrix(y_true, y_pred, labels=np.arange(10))
-    cifar10_labeles = ["airplane","automobile","bird","cat","deer","dog","frog","horse","ship","truck",],
-    snapshot10_labeles = ['gazellegrants','zebra','gazellethomsons','impala','elephant','giraffe','buffalo','hartebeest','guineafowl','wildebeest']
-    df_cm = pd.DataFrame(cf,index=snapshot10_labeles, columns=snapshot10_labeles)
-    fig, ax = plt.subplots(figsize=(8, 8))
+def wandb_log_confusion_matrix(y_pred,y_true,caption,dataset):
+    if dataset == "cifar10":
+        labels = ["airplane","automobile","bird","cat","deer","dog","frog","horse","ship","truck",],
+    elif dataset == "SnapshotSerengeti10":
+        labels = ['gazellegrants','zebra','gazellethomsons','impala','elephant','giraffe','buffalo','hartebeest','guineafowl','wildebeest']
+    elif dataset == "SnapshotSerengeti":
+        labels_path = os.environ['DATA_DIR_PATH'] + "/" + "df_category_lut_adapted.df"
+        labels_df = pd.read_pickle(labels_path)
+        labels =  labels_df.name.tolist()
+    cf = confusion_matrix(y_true, y_pred, labels=np.arange(len(labels)))
+    df_cm = pd.DataFrame(cf,index=labels, columns=labels)
+    fig, ax = plt.subplots(figsize=(40, 40))
     sns.heatmap(df_cm, annot=True, ax=ax)
     wandb.log({
         "confusion_matrix_validate": wandb.Image(fig, caption=caption),
     })
 
 def train_epoch_ssl2(models, method, criterion, optimizers, dataloaders, 
-                                        epoch, schedulers, cycle, last_inter):
+                                        epoch, schedulers, cycle, last_inter,args):
     models['backbone'].train()
     models['classifier'].train()
     TRAIN_CLIP_GRAD = True
@@ -501,7 +522,7 @@ def train_epoch_ssl2(models, method, criterion, optimizers, dataloaders,
     num_steps = len(dataloaders['train'])
     c_loss_gain = 0.5 #- 0.05*cycle
     Y_PRED,Y_TRUE = [],[]
-    for (samples,samples_a) in tqdm(zip(dataloaders['train'],dataloaders['train2']), leave=False, total=len(dataloaders['train'])):
+    for (samples,samples_a) in zip(dataloaders['train'],dataloaders['train2']):#, leave=False, total=len(dataloaders['train']):
         
         samples_a = samples_a[0].cuda(non_blocking=True)
         samples_r = samples[0].cuda(non_blocking=True)
@@ -516,7 +537,7 @@ def train_epoch_ssl2(models, method, criterion, optimizers, dataloaders,
             c_loss = (torch.sum(contrastive_loss)) / contrastive_loss.size(0)
             loss = t_loss + c_loss_gain*c_loss
             # loss.backward()
-            if epoch ==220:
+            if epoch == 220:
                 Y_PRED.append(np.argmax(scores.detach().cpu().numpy(),axis=1))
                 Y_TRUE.append(targets.detach().cpu().numpy())
         else:
@@ -528,15 +549,38 @@ def train_epoch_ssl2(models, method, criterion, optimizers, dataloaders,
             optimizers['classifier'].zero_grad()
             optimizers['classifier'].step()
     
-        if idx % 100 == 0:
-            wandb.log({"task loss":t_loss, "contrastive loss":c_loss})
+        # if idx % 100 == 0:
+        wandb.log({"task loss":t_loss, "contrastive loss":c_loss})
         idx +=1
     
     if epoch == 220:
         Y_PRED = np.concatenate(Y_PRED, axis=0)
         Y_TRUE = np.concatenate(Y_TRUE, axis=0)
-        wandb_log_confusion_matrix(Y_PRED,Y_TRUE,"training")
+        wandb_log_confusion_matrix(Y_PRED,Y_TRUE,"training",args.dataset)
     return loss
+
+def evaluate_labeldispersion_unlabeled_data(label_dispersion_metric,models,dataloaders):
+    models['backbone'].eval()
+    models['classifier'].eval()
+    with torch.no_grad():
+        # iterate through unlabeled data
+        for (inputs, labels, idx) in dataloaders['unlabeled']:
+            # predict labeles
+            inputs = inputs.cuda()
+            labels = labels.cuda()
+            _, feat, _ = models['backbone'](inputs,inputs,labels)
+            scores = models['classifier'](feat)
+            _, preds = torch.max(scores.data, 1)
+
+            # store labeles for index
+            for (prediction, label, index) in zip(preds, labels, idx): # loop over batch
+                prediction, label, index = prediction.item(), label.item(), index.item()
+                if index not in label_dispersion_metric:
+                    label_dispersion_metric[index] = [label] # ensure first element is truth label, for analysis purposes.
+                    label_dispersion_metric[index].append(prediction)
+                else:
+                    label_dispersion_metric[index].append(prediction)
+    # return label_dispersion_metric
 
 def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloaders, num_epochs, 
                            no_classes, args, labeled_data, unlabeled_data, data_train, cycle, last_inter, ADDENDUM, dim_latent):
@@ -546,6 +590,12 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
 
     l_lab = 0
     l_ulab = 0
+    if args.sampling_strategy == 'labeldispersion' and args.continuation:
+        path = f'./MoBYv2AL/models/{args.dataset}_{args.method_type}_{args.run_id}_labeldispersion_indices.pkl'
+        with open(path, 'rb') as file:
+            label_dispersion_metric = pickle.load(file)
+    else:     
+        label_dispersion_metric = {}
 #    with profile(activities=[
 #        ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
  #       with record_function("model_training"):
@@ -554,16 +604,16 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
         print(f'EPOCH NUMBER: {epoch}')
         best_loss = torch.tensor([99]).cuda()
         # loss = train_epoch(models, method, criterion, optimizers, dataloaders, epoch, epoch_loss)
-        loss = train_epoch_ssl2(models, method, criterion, optimizers, dataloaders, epoch, schedulers, cycle, last_inter)
+        loss = train_epoch_ssl2(models, method, criterion, optimizers, dataloaders, epoch, schedulers, cycle, last_inter, args)
         schedulers['classifier'].step(loss)
         schedulers['backbone'].step(loss)
 
-        if True and epoch % 40  == 1:
-            # acc = test_with_ssl(models, epoch, method, dataloaders, args, mode='test')
-            # print(loss.item())
-            #if epoch == 1:
+        if epoch == 0: # DEBUGGING
             torch.save(models['backbone'].state_dict(), './MoBYv2AL/models/backbonehcss_%s_%d.pth'%(args.dataset,cycle)) 
             torch.save(models['classifier'].state_dict(), './MoBYv2AL/models/classifierhcss_%s_%d.pth'%(args.dataset,cycle))
+        if epoch > 100 and epoch % 40  == 1: # DEBUGGING, change back to True
+            # acc = test_with_ssl(models, epoch, method, dataloaders, args, mode='test')
+            # print(loss.item())
 
             acc = test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode='test')
 #            acc = 0
@@ -573,12 +623,26 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
                 best_acc = acc
 
             print('Acc: {:.3f} \t Best Acc: {:.3f}'.format(acc, best_acc))
+        
+        if args.sampling_strategy in ['labeldispersion','corelb','corelbpseudo']:
+            print('doing label dispersion loop!')
+            if epoch % 20 == 1: # change back to 1 after DEBUGGING 
+                evaluate_labeldispersion_unlabeled_data(label_dispersion_metric,models,dataloaders)
+                with open(f'./MoBYv2AL/models/{args.dataset}_{args.method_type}_{args.run_id}_labeldispersion_indices.pkl', 'wb') as file:
+                    pickle.dump(label_dispersion_metric, file, protocol=pickle.HIGHEST_PROTOCOL)
+
         wandb.log({"training loss":loss})
 #    print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=10))
     print('>> Finished.')
-    subset = len(unlabeled_data)
-    arg = np.random.randint(subset, size=subset)
-    return best_acc, arg
+    
+    if args.sampling_strategy=='random':
+        # subset = len(unlabeled_data)
+        # arg = np.random.randint(subset, size=subset)
+        # change to directly returning datapoint indices instead of posistion of datapoints.
+        arg = np.random.choice(unlabeled_data, ADDENDUM, replace=False)
+        print('returning random points')
+        return best_acc, arg
+    
     models['classifier'].eval()
     models['backbone'].eval()
     # # 
@@ -608,8 +672,8 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
     models_b.load_state_dict(state_dict, strict=False)
     models_b.eval()
     combined_dataset = DataLoader(data_train, batch_size=args.batch, 
-                                    sampler=SubsetSequentialSampler(unlabeled_data+labeled_data), 
-                                    pin_memory=True, drop_last=False, num_workers = int(os.environ['NUM_WORKERS']))
+                                    sampler=SubsetSequentialSampler(unlabeled_data+labeled_data),
+                                    pin_memory=False, drop_last=False, num_workers = int(os.environ['NUM_WORKERS']))
 
     for ulab_data in combined_dataset:
         
@@ -620,17 +684,101 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
         feat = np.squeeze(feat)
         features = np.concatenate((features, feat), 0)
 
-    features = features[args.batch:,:]
+    features = features[args.batch:,:] # omit the first batch, since these are empty.
     subset = len(unlabeled_data)
     labeled_data_size = len(labeled_data)
-    # Apply CoreSet for selection
-    new_av_idx = np.arange(subset,(subset + labeled_data_size))
-    sampling = kCenterGreedy(features)  
-    batch = sampling.select_batch_(new_av_idx, ADDENDUM)
-        # print(min(batch), max(batch))
-    other_idx = [x for x in range(subset) if x not in batch]
-    # np.save("selected_s.npy", batch)
-    arg = np.array(other_idx + batch)
+    
+    if args.sampling_strategy=='coreset':
+        # Apply CoreSet for selection
+        new_av_idx = np.arange(subset,(subset + labeled_data_size))
+        sampling = kCenterGreedy(features)  
+        av_idx_batch = sampling.select_batch_(new_av_idx, ADDENDUM) # batch with new_av_idx
+        #change new_av_idx to corresponding datapoint index
+        tmp_unlabeled_data = np.array(unlabeled_data)
+        batch = tmp_unlabeled_data[av_idx_batch]
+            # print(min(batch), max(batch))
+        
 
+    if args.sampling_strategy=='labeldispersion':
+        # take list of predictions over epoch of unlabeled dataset
+        # path = f'./MoBYv2AL/models/{args.dataset}_{args.method_type}_{args.run_id}_labeldispersion_indices.pkl'
+        # with open(path, 'rb') as file:
+        #     label_dispersion_metric = pickle.load(file)
+
+        # label_dispersion_metric
+        sampling = []
+        for index, label_list in label_dispersion_metric.items():
+            label_list = label_list[1:] # ommits the first element, which is the true label
+            # create a dictionary with the datapoint index as keys and the occurence as values
+            occurence_dict = {i:label_list.count(i) for i in label_list}
+            # sort the dictionary by highest values 
+            sorted_occurence_dict = [(k, v) for k, v in sorted(occurence_dict.items(), key=lambda item: item[1],reverse=True)]
+            most_common_label = sorted_occurence_dict[0][0]
+            most_common_label_occurence = sorted_occurence_dict[0][1]
+
+            # calculate the label dispersion
+            label_dispersion = most_common_label_occurence/len(label_list)
+
+            sampling.append((index,label_dispersion))
+        
+        sampling =sorted(sampling, key=lambda x: x[1],reverse=False) #reverse=False => small label dispersion (0.2) are first.
+        batch = [k for k,v in sampling[:ADDENDUM]] # only taking the indices
+
+    if args.sampling_strategy in ['corelb','corelbpseudo']:
+        # first apply label dispersion, then coreset
+        sampling = []
+        for index, label_list in label_dispersion_metric.items():
+            label_list = label_list[1:] # ommits the first element, which is the true label
+            # create a dictionary with the datapoint index as keys and the occurence as values
+            occurence_dict = {i:label_list.count(i) for i in label_list}
+            # sort the dictionary by highest values 
+            sorted_occurence_dict = [(k, v) for k, v in sorted(occurence_dict.items(), key=lambda item: item[1],reverse=True)]
+            most_common_label = sorted_occurence_dict[0][0]
+            most_common_label_occurence = sorted_occurence_dict[0][1]
+
+            # calculate the label dispersion
+            label_dispersion = most_common_label_occurence/len(label_list)
+
+            sampling.append((index,label_dispersion))
+        
+        #select indices (unlabeled data) with high lb. filter these out before coreset
+        high_lb_indices = [index for index, label_dispersion in sampling if label_dispersion >=1 ]
+        position_of_high_lb_indices = [unlabeled_data.index(h_lb_i) for h_lb_i in high_lb_indices]
+        # Create a boolean mask where True represents indices to exclude
+        exclude_mask = np.isin(np.arange(len(features)), position_of_high_lb_indices)
+        features = features[~exclude_mask]
+        print(f'high lb indices length: {len(high_lb_indices)}')
+        print(f'features length: {features.shape}')
+
+        # only do coreset after filtering high lb
+        subset = len(unlabeled_data) - len(high_lb_indices) 
+        new_av_idx = np.arange(subset,(subset + labeled_data_size))
+        sampling = kCenterGreedy(features)  
+        av_idx_batch = sampling.select_batch_(new_av_idx, ADDENDUM) # batch with new_av_idx
+        #change new_av_idx to corresponding datapoint index
+        tmp_unlabeled_data = np.array(unlabeled_data)
+        batch = tmp_unlabeled_data[av_idx_batch]
+
+        for b in batch:
+            if b not in unlabeled_data:
+                raise Exception(f' {b} not in unlabeled_data')
+
+        
+        if args.sampling_strategy == 'corelbpseudo':
+            pseudo_labels = {}
+            # save high label dispersion indices in a file in form{indices: pseudo_label}
+            for index in high_lb_indices:
+                if label_dispersion >=1:
+                    pseudo_labels[index] = label_dispersion_metric[index][-1] # since all elements are the same, take the last one.
+            
+            with open(f'./MoBYv2AL/models/pseudo_labels_{args.dataset}_{args.method_type}_{args.run_id}.pkl', 'wb') as file:
+                    pickle.dump(pseudo_labels, file, protocol=pickle.HIGHEST_PROTOCOL)
+
+            batch = batch + high_lb_indices
+
+    other_idx = [x for x in range(subset) if x not in batch]
+    # # np.save("selected_s.npy", batch)
+    # arg = np.array(other_idx + batch)
+    arg = np.array(batch)
 
     return best_acc, arg

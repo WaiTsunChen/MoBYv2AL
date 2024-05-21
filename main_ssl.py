@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.append(".")
-
+# torch.multiprocessing.set_sharing_strategy('file_system')
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-d","--dataset", type=str, default="cifar10",
@@ -83,7 +83,7 @@ if __name__ == '__main__':
     BATCH = args.batch
     TRIALS = args.trials
     methods = ['Random', 'CoreSet', 'mobyv2al']
-    datasets = ['cifar10', 'cifar100', 'fashionmnist','svhn','svhn5','SnapshotSerengeti10','SnapshotSerengeti']
+    datasets = ['cifar10', 'cifar100', 'fashionmnist','svhn','svhn5','SnapshotSerengeti10','SnapshotSerengeti','SnapshotSerengetiSmall']
     learner_models = ["vgg16","resnet18","lenet5","wideresnet28"]
     assert method in methods, 'No method %s! Try options %s'%(method, methods)
     assert args.dataset in datasets, 'No dataset %s! Try options %s'%(args.dataset, datasets)
@@ -119,6 +119,8 @@ if __name__ == '__main__':
             if args.total:
                 labeled_set= indices
                 unlabeled_set = [x for x in range(0, NUM_TRAIN)]
+                init_margin = int(NUM_TRAIN/10)
+                ADDENDUM = 2500
             else:
                 if args.dataset=='fashionmnist':
                     if os.path.isfile("init_set_fm.npy"):
@@ -157,7 +159,10 @@ if __name__ == '__main__':
                         # labeled_set = np.load("init_set.npy").tolist()
                         # labeled_set = indices[:27500]
                     else:
-                        labeled_set = indices[:5000] 
+                        labeled_set = indices[:5000]
+                        # labeled_set = indices[:150000]
+                        # labeled_set = indices[:169999] # minus1
+                        # labeled_set = indices[:1277250] #minus 1
                         # labeled_set = indices[:27500]
                         # np.save("init_set.npy", np.asarray(labeled_set))
                 print(ADDENDUM)
@@ -239,19 +244,23 @@ if __name__ == '__main__':
                         lab_loader = DataLoader(data_train, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(interleaved), 
                                                 pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS, 
-                                                prefetch_factor=1)
+                                                prefetch_factor=4
+                                                )
                         lab_loader2 = DataLoader(data_train2, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(interleaved), 
                                                 pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS,
-                                                prefetch_factor=1)
+                                                prefetch_factor=4
+                                                )
                         unlab_loader2 = DataLoader(data_unlabeled2, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(subset), 
                                                 pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS, 
-                                                prefetch_factor=2)
+                                                prefetch_factor=4
+                                                )
                         unlab_loader = DataLoader(data_unlabeled, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(subset), 
                                                 pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS,
-                                                prefetch_factor=2)
+                                                prefetch_factor=4
+                                                )
                         dataloaders  = {'train': lab_loader, 'train2': lab_loader2, 
                                         'test': test_loader, 'unlabeled': unlab_loader, 'unlabeled2': unlab_loader2}
                 else:
@@ -298,8 +307,26 @@ if __name__ == '__main__':
                 
                 torch.backends.cudnn.benchmark = True
 
-                Nes_flag = False        
-                criterion      = nn.CrossEntropyLoss(reduction='none')
+                Nes_flag = False
+                imbalanced_weight = None
+                if args.dataset in ['SnapshotSerengeti','SnapshotSerengetiSmall']:
+                    imbalanced_weight = torch.tensor(
+                        [9.88957138e-01, 7.43517187e+00, 9.62989128e+00, 1.11792148e-01,
+                        9.21205193e+01, 1.50810242e-01, 3.38762817e+00, 1.54643790e+00,
+                        9.31626781e-01, 9.63842993e-01, 6.86251343e+01, 1.54459209e+00,
+                        5.23613742e+01, 5.21864139e-01, 9.95149890e-01, 1.02040978e+00,
+                        4.86570623e-02, 1.01024361e+02, 1.77039434e+01, 2.32567849e+00,
+                        1.72106100e+01, 4.58040674e+00, 8.59441910e+00, 4.38315374e+02,
+                        8.91001744e+01, 3.37584512e+01, 1.15640652e+02, 1.38509445e+01,
+                        1.23525242e+02, 4.21326406e+01, 5.87198643e+00, 3.59464989e+01,
+                        4.77601989e+01, 5.29737879e+01, 2.74778091e+01, 3.79334913e+00,
+                        4.10506846e+01, 1.55912525e+01, 3.61521261e+00, 3.43994344e+02,
+                        3.08813104e+02, 5.90772895e+02, 5.78203259e+02, 1.23525242e+03,
+                        2.92210249e+02, 4.94100967e+02]#,7.76444377e+01]
+                    )
+                    imbalanced_weight = imbalanced_weight.cuda()
+                    imbalanced_weight = None
+                criterion      = nn.CrossEntropyLoss(reduction='none',weight=imbalanced_weight)
                 optim_backbone = optim.SGD(models['backbone'].parameters(), lr=LR*1, 
                 momentum=MOMENTUM, weight_decay=WDECAY, nesterov=Nes_flag)
 
@@ -364,7 +391,7 @@ if __name__ == '__main__':
                 # random sampling
                 # arg = np.random.randint(len(subset), size=len(subset))
                 # Update the labeled dataset and the unlabeled dataset, respectively
-                np.save(f'./MoBYv2AL/models/{args.dataset}_{args.method_type}_{args.run_id}_npy', np.asarray(labeled_set))
+                np.save(f'./MoBYv2AL/models/{args.dataset}_{args.method_type}_{args.run_id}_labeled_indices', np.asarray(labeled_set))
                 dataloaders['train'] = DataLoader(data_train, batch_size=BATCH, 
                                             sampler=SubsetRandomSampler(labeled_set), 
                                             pin_memory=False, drop_last=drop_flag)

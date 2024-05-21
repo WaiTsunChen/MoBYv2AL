@@ -34,6 +34,8 @@ from scipy.spatial import distance
 
 import abc
 import numpy as np
+import xarray as xr
+from dask import array as da 
 
 class SamplingMethod(object):
   __metaclass__ = abc.ABCMeta
@@ -49,6 +51,8 @@ class SamplingMethod(object):
     flat_X = self.X
     if len(shape) > 2:
       flat_X = np.reshape(self.X, (shape[0],np.product(shape[1:])))
+
+    flat_X = xr.DataArray(data=flat_X)
     return flat_X
 
 
@@ -81,6 +85,10 @@ class kCenterGreedy(SamplingMethod):
         self.n_obs = self.X.shape[0]
         self.already_selected = []
 
+        # print(f'X.shape: {self.X}')
+        # print(f'flat_X.shape: {self.flat_X}')
+        # print(f'features.shape: {self.features}')
+
     def update_distances(self, cluster_centers, only_new=True, reset_dist=False):
         """Update min distances given cluster centers.
         Args:
@@ -98,7 +106,7 @@ class kCenterGreedy(SamplingMethod):
         if cluster_centers:
           x = self.features[cluster_centers]
           # Update min_distances for all examples given new cluster center.
-          dist = pairwise_distances(self.features, x, metric=self.metric)#,n_jobs=4)
+          dist = pairwise_distances(self.features, x, metric=self.metric,n_jobs=4)
 
           if self.min_distances is None:
             self.min_distances = np.min(dist, axis=1).reshape(-1,1)
@@ -139,7 +147,7 @@ class kCenterGreedy(SamplingMethod):
             ind = np.argmax(self.min_distances)
           # New examples should not be in already selected since those points
           # should have min_distance of zero to a cluster center.
-          assert ind not in already_selected
+          assert ind not in already_selected, f'{ind} is already selected'
 
           self.update_distances([ind], only_new=True, reset_dist=False)
           new_batch.append(ind)

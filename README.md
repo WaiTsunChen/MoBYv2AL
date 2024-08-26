@@ -23,13 +23,14 @@ If you find this code useful please cite:
 }
 ```
 ## Repo structure
-For incorporated the Snapshot Serengeti dataset and model training, we adapted the "*.py" files. We added two folder with "_plots" ending. There our major analysis and plot creations can be found. 
+For incorporating the Snapshot Serengeti dataset and model training, we adapted the "*.py" files. We added two folders with "_plots" ending. There, our major analysis and plot creations can be found. 
 
-- *reducce_save_umage_size.py* includes the script for preprocessesing the images.
+- *reducce_save_umage_size.py* includes the script for preprocessesing and storing the images.
 - *sampling_probability.ipynb* includes the analysis for the creation of subset 250'000 samples.
-- *temporary.ipynb* is a temporary notebook, where we ended up creating plots for the train/test split, bounding box example and Coreset explanation.
+- *temporary.ipynb* is a temporary code dump notebook, where we ended up creating plots for the train/test split, bounding box example and Coreset explanation.
 
 All our model results and source images are stored on the FHNW server, see below. 
+
 ## SLURM Example
 
 ```

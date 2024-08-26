@@ -28,6 +28,7 @@ from selection_methods import query_samples
 from sampler import SubsetSequentialSampler
 import wandb
 from dotenv import load_dotenv
+import pickle
 
 load_dotenv()
 sys.path.append(".")
@@ -62,6 +63,8 @@ parser.add_argument("-cont","--continuation", type=str,default=None,
                     help="continue where slurm broke off")
 parser.add_argument('-id',"--run_id",type=int,default=0,
                     help="artifical id to identify, in case slurm breaks")
+parser.add_argument('-asi',"--advanced_starting_indices", type=str, default='no',
+                    help="if True ensures one image in the labeled set for all species.")
 args = parser.parse_args()
 
 ##
@@ -73,7 +76,7 @@ if __name__ == '__main__':
     else:
         args.ssl = False
     CUDA_VISIBLE_DEVICES = 0
-    MILESTONES = [60,120,160]
+    MILESTONES = [60,120,160] #[20,30,60]
     MOMENTUM = 0.9
     WDECAY = 5e-4
     LR = 1e-2
@@ -101,6 +104,12 @@ if __name__ == '__main__':
     else:
         CYCLES = args.cycles
 
+    #create subfolder for storing results, indices, models, features
+    args.folder_path = f'results/{args.dataset}_{args.method_type}_{args.run_id}'
+    os.makedirs(f'./MoBYv2AL/{args.folder_path}',exist_ok=True)
+    # create early stop flag
+    args.early_stop_now = False
+
     # print(args.visual_transformer)
     wandb.login(key=os.environ['WANDB_KEY'])
     with wandb.init(project="mobyv2al", config=args):
@@ -117,7 +126,8 @@ if __name__ == '__main__':
             random.shuffle(indices)
 
             if args.total:
-                labeled_set= indices
+                labeled_set= indices[:4500] + indices[5000:]
+                validation_set = indices[4500:5000]
                 unlabeled_set = [x for x in range(0, NUM_TRAIN)]
                 init_margin = int(NUM_TRAIN/10)
                 ADDENDUM = 2500
@@ -153,39 +163,67 @@ if __name__ == '__main__':
                     ADDENDUM = 2500
                     init_margin = int(NUM_TRAIN/10)
                     if args.continuation: # workaround since slurm gpu usage drops down(?)
-                        labeled_set = np.load(f'./MoBYv2AL/models/{args.continuation}.npy', allow_pickle=True).tolist()
+                        #search for the most recent label indices 
+                        labeled_set = np.load(f'./MoBYv2AL/{args.folder_path}/{args.continuation}.npy', allow_pickle=True).tolist()
+                        validation_set = np.load(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_validation_labeled_indices.npy', allow_pickle=True).tolist()
                     # elif os.path.isfile("init_set.npy"):
                         # take 10% of the labelled data at first run for CIFAR10/100
                         # labeled_set = np.load("init_set.npy").tolist()
                         # labeled_set = indices[:27500]
+                    
+                    elif args.advanced_starting_indices=='yes' and args.dataset == 'SnapshotSerengetiSmall':
+                        # esure there is one labeled image for each class
+                        labeled_set_core_path = os.environ['DATA_DIR_PATH']+ '/' + 'one_index_per_class_category.npy'
+                        labeled_set_core = np.load(labeled_set_core_path, allow_pickle=True).tolist()
+                        labeled_set = indices[:4500]
+                        for idx, core in enumerate(labeled_set_core):
+                            if core not in labeled_set:
+                                labeled_set[idx] = core
+                        validation_set = indices[4500:5000]
+                        np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_validation_labeled_indices', np.asarray(validation_set))
+                        
                     else:
-                        labeled_set = indices[:5000]
+                        labeled_set = indices[:4500]
+                        validation_set = indices[4500:5000]
                         # labeled_set = indices[:150000]
                         # labeled_set = indices[:169999] # minus1
                         # labeled_set = indices[:1277250] #minus 1
                         # labeled_set = indices[:27500]
                         # np.save("init_set.npy", np.asarray(labeled_set))
+                        np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_validation_labeled_indices', np.asarray(validation_set))
+
                 print(ADDENDUM)
-                unlabeled_set = set(indices) - set(labeled_set) #[x for x in indices if x not in labeled_set]
-                unlabeled_set = list(unlabeled_set)
+                unlabeled_set = list(set(indices) - set(labeled_set)- set(validation_set))
+                random.shuffle(unlabeled_set)
+                # unlabeled_set = list(unlabeled_set)
+                
 
             lab_loader = DataLoader(data_train, batch_size=BATCH, 
                                         sampler=SubsetSequentialSampler(labeled_set), 
                                         pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS)
             test_loader  = DataLoader(data_test, batch_size=BATCH, drop_last=drop_flag, num_workers=NUM_WORKERS)
+            validation_loader = DataLoader(data_train, batch_size=BATCH, 
+                                                sampler=SubsetSequentialSampler(validation_set), 
+                                                pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS,
+                                                prefetch_factor=4
+                                                )
             if args.ssl:
                 lab_loader2 = DataLoader(data_train2, batch_size=BATCH, 
                                         sampler=SubsetSequentialSampler(labeled_set), 
                                         pin_memory=False, drop_last=drop_flag)
 
-                dataloaders  = {'train': lab_loader, 'train2': lab_loader2, 'test': test_loader}
+                dataloaders  = {'train': lab_loader, 'train2': lab_loader2, 'test': test_loader, 'val':validation_loader}
             else:
-                dataloaders  = {'train': lab_loader, 'test': test_loader}
+                dataloaders  = {'train': lab_loader, 'test': test_loader, 'val': validation_loader}
             
             
 
             # Active learning cycle
-            for cycle in range(args.cycles):
+            cycle_start = 0
+            if args.continuation:
+                cycle_start = int(args.continuation.split("_")[3])
+                
+            for cycle in range(cycle_start,args.cycles,1):
                 
                 # Randomly sample SUBSET unlabeled data points
                 if not args.total:
@@ -240,6 +278,10 @@ if __name__ == '__main__':
                     #     interleaved = interleaved + labeled_set[(idx+1)*BATCH:]
                     last_interleaved = idx
                     print(f'last interleave: {last_interleaved}')
+                    # if args.sampling_strategy == 'corelbpseudo' and cycle >=1:
+                    #     with open(f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle-1}_pseudo_labels.pkl', 'rb') as file:
+                    #         pseudo_labels = pickle.load(file)
+                    #     data_train.pseudo_labels = pseudo_labels 
                     if args.ssl:
                         lab_loader = DataLoader(data_train, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(interleaved), 
@@ -262,10 +304,11 @@ if __name__ == '__main__':
                                                 prefetch_factor=4
                                                 )
                         dataloaders  = {'train': lab_loader, 'train2': lab_loader2, 
-                                        'test': test_loader, 'unlabeled': unlab_loader, 'unlabeled2': unlab_loader2}
+                                        'test': test_loader, 'unlabeled': unlab_loader, 
+                                        'unlabeled2': unlab_loader2, 'val':validation_loader}
                 else:
                     dataloaders  = {'train': lab_loader, 
-                                'test': test_loader, 'unlabeled': unlab_loader}
+                                'test': test_loader, 'unlabeled': unlab_loader, 'val': validation_set}
                 
                 # Model - create new instance for every cycle so that it resets
                 with torch.cuda.device(CUDA_VISIBLE_DEVICES):
@@ -378,10 +421,6 @@ if __name__ == '__main__':
                 wandb.log({"label_set_size": len(labeled_set), "final_test_acc": acc})
 
 
-                if cycle == (CYCLES-1):
-                    # Reached final training cycle
-                    print("Finished.")
-                    break
                 # Get the indices of the unlabeled samples to train on next cycle
                 if (args.method_type != "mobyv2al"):
                     arg = query_samples(models, method, data_unlabeled, subset, labeled_set, cycle, args, drop_flag, ADDENDUM)
@@ -391,16 +430,24 @@ if __name__ == '__main__':
                 # random sampling
                 # arg = np.random.randint(len(subset), size=len(subset))
                 # Update the labeled dataset and the unlabeled dataset, respectively
-                np.save(f'./MoBYv2AL/models/{args.dataset}_{args.method_type}_{args.run_id}_labeled_indices', np.asarray(labeled_set))
+                np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_labeled_indices', np.asarray(labeled_set))
                 dataloaders['train'] = DataLoader(data_train, batch_size=BATCH, 
                                             sampler=SubsetRandomSampler(labeled_set), 
                                             pin_memory=False, drop_last=drop_flag)
                 #listd = list(torch.tensor(subset)[arg][:ADDENDUM].numpy()) 
                 unlabeled_set = [x for x in range(NUM_TRAIN) if x not in labeled_set]
+                if False or args.sampling_strategy == 'corelbpseudo' and  cycle>0:
+                    with open(f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_pseudo_labels.pkl', 'rb') as file:
+                        pseudo_labels = pickle.load(file)
+                    unlabeled_set = [x for x in unlabeled_set if x not in pseudo_labels.keys()]
                 #unlabeled_set =  [x for x in unlabeled_set if x not in listd]
                 random.shuffle(unlabeled_set)
 
                 #unlabeled_set = listd + unlabeled_set
                 print(len(labeled_set), min(labeled_set), max(labeled_set))
-
+                if cycle == (CYCLES-1):
+                    # Reached final training cycle
+                    print("Finished.")
+                    break
+                    
     results.close()

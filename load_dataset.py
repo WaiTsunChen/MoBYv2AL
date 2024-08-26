@@ -142,33 +142,33 @@ class BoundingBoxImageLoader(Dataset):
     def __len__(self):
         return len(self.dataframe)
 
-    # def __getitem__(self, idx):
-    #     if torch.is_tensor(idx):
-    #         idx = idx.tolist()
+    def __getitem_without_preprocessing__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
 
-    #     img_name = os.path.join(self.root_dir,
-    #                             self.dataframe.iloc[idx, 0]+'.JPG')
+        img_name = os.path.join(self.root_dir,
+                                self.dataframe.iloc[idx, 0]+'.JPG')
 
-    #     image = Image.open(img_name)
-    #     #image = Image.new('RGB',(128, 128))
-    #     #image = pyvips.Image.new_from_file(img_name, access='sequential')
-    #     bbox_im = self.dataframe.iloc[idx, 1]
-    #     image_croped = T.functional.crop(
-    #         image, int(bbox_im[1]), int(bbox_im[0]), int(bbox_im[3]), int(bbox_im[2])) # top, left, height, width
+        image = Image.open(img_name)
+        #image = Image.new('RGB',(128, 128))
+        #image = pyvips.Image.new_from_file(img_name, access='sequential')
+        bbox_im = self.dataframe.iloc[idx, 1]
+        image_croped = T.functional.crop(
+            image, int(bbox_im[1]), int(bbox_im[0]), int(bbox_im[3]), int(bbox_im[2])) # top, left, height, width
         
-    #     sample = image_croped
+        sample = image_croped
 
-    #     # get pseudo label if available
-    #     # if idx in self.pseudo_labels:
-    #     #     target = self.pseudo_labels[idx]
-    #     # else:
-    #     target = self.dataframe.iloc[idx, 2]
+        # get pseudo label if available
+        # if idx in self.pseudo_labels:
+        #     target = self.pseudo_labels[idx]
+        # else:
+        target = self.dataframe.iloc[idx, 2]
         
-    #     if self.transform:
-    #         sample = self.transform(sample)
-    #     # if self.is_test:
-    #     #     return sample, target
-    #     return sample, target, idx
+        if self.transform:
+            sample = self.transform(sample)
+        # if self.is_test:
+        #     return sample, target
+        return sample, target, idx
         
  # testing croped resized images
     def __getitem__(self, idx):
@@ -319,7 +319,7 @@ def load_dataset(dataset, args, add_ssl=False, image_size=32):
 
     if add_ssl:
         # Strong augmentations
-        transform_2 = T.Compose([
+        transform_2_original =T.Compose([
             # T.Resize(IMG_SIZE, interpolation=_pil_interp('bicubic')),
             T.RandomResizedCrop(IMG_SIZE, scale=(0.2, 1.)),
             T.RandomHorizontalFlip(0.5),
@@ -330,6 +330,18 @@ def load_dataset(dataset, args, add_ssl=False, image_size=32):
             T.ToTensor(),
             normalize,
         ])
+        transform_2_advanced =T.Compose([
+            T.RandomResizedCrop(IMG_SIZE, scale=(0.2, 1.)),
+            T.RandomHorizontalFlip(0.5),
+            T.RandomApply([T.ColorJitter(0.4, 0.4, 0.2, 0.1)], p=0.8),
+            T.RandomGrayscale(p=0.5),
+            T.RandomApply([GaussianBlur()], p=0.5),
+            T.RandomApply([ImageOps.solarize], p=0.5),
+            T.ToTensor(),
+            normalize,
+        ])
+
+        transform_2 = transform_2_original
 
 
     
@@ -483,13 +495,17 @@ def load_dataset(dataset, args, add_ssl=False, image_size=32):
         
     elif dataset == 'SnapshotSerengeti10':
         if args.sampling_strategy == 'corelbpseudo': # create subclass that additionally has pseudolabels
-            with open(f'./MoBYv2AL/models/pseudo_labels_{args.dataset}_{args.method_type}_{args.run_id}.pkl', 'wb') as file:
-                pickle.dump({}, file, protocol=pickle.HIGHEST_PROTOCOL)
+            if args.continuation:
+                cycle = int(args.continuation.split("_")[3]) 
+            else:
+                cycle = 0
+                with open(f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_pseudo_labels.pkl', 'wb') as file:
+                    pickle.dump({}, file, protocol=pickle.HIGHEST_PROTOCOL)
             data_train = BoundingBoxImageLoaderWithPseudoLabels(
                 pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_balanced_top_10_metadata_train.df',
                 root_dir=os.environ['DATA_DIR_PATH'],
                 transform=snapshotserengeti10_train_transform,
-                pseudo_labels_pickle_file=f'./MoBYv2AL/models/pseudo_labels_{args.dataset}_{args.method_type}_{args.run_id}.pkl'
+                pseudo_labels_pickle_file=f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_pseudo_labels.pkl'
                 )
         else:
             data_train = BoundingBoxImageLoader(
@@ -509,11 +525,15 @@ def load_dataset(dataset, args, add_ssl=False, image_size=32):
 
         if add_ssl:
             if args.sampling_strategy == 'corelbpseudo':
+                if args.continuation:
+                    cycle = int(args.continuation.split("_")[3]) 
+                else:
+                    cycle = 0
                 data_train2 = BoundingBoxImageLoaderWithPseudoLabels(
                     pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_balanced_top_10_metadata_train.df',
                     root_dir=os.environ['DATA_DIR_PATH'],
                     transform=snapshotserengeti10_train_transform2,
-                    pseudo_labels_pickle_file=f'./MoBYv2AL/models/pseudo_labels_{args.dataset}_{args.method_type}_{args.run_id}.pkl'
+                    pseudo_labels_pickle_file=f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_pseudo_labels.pkl'
                     )                
             else: 
                 data_train2 = BoundingBoxImageLoader(
@@ -526,17 +546,21 @@ def load_dataset(dataset, args, add_ssl=False, image_size=32):
                 root_dir=os.environ['DATA_DIR_PATH'],
                 transform=snapshotserengeti10_train_transform2)
         NO_CLASSES = 10
-        no_train = 175000
+        no_train = 150000
     
     elif dataset == 'SnapshotSerengeti':
         if args.sampling_strategy == 'corelbpseudo':
-            with open(f'./MoBYv2AL/models/pseudo_labels_{args.dataset}_{args.method_type}_{args.run_id}.pkl', 'wb') as file:
-                pickle.dump({}, file, protocol=pickle.HIGHEST_PROTOCOL)
+            if args.continuation:
+                    cycle = int(args.continuation.split("_")[3]) 
+            else:
+                cycle = 0
+                with open(f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_pseudo_labels.pkl', 'wb') as file:
+                    pickle.dump({}, file, protocol=pickle.HIGHEST_PROTOCOL)
             data_train = BoundingBoxImageLoaderWithPseudoLabels(
                 pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_metadata_train.df',
                 root_dir=os.environ['DATA_DIR_PATH'],
                 transform=snapshotserengeti_train_transform,
-                pseudo_labels_pickle_file=f'./MoBYv2AL/models/pseudo_labels_{args.dataset}_{args.method_type}_{args.run_id}.pkl'
+                pseudo_labels_pickle_file=f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_pseudo_labels.pkl'
             )
         else:
             data_train = BoundingBoxImageLoader(
@@ -554,11 +578,15 @@ def load_dataset(dataset, args, add_ssl=False, image_size=32):
             is_test=True)
         if add_ssl:
             if args.sampling_strategy == 'corelbpseudo':
+                if args.continuation:
+                    cycle = int(args.continuation.split("_")[3]) 
+                else:
+                    cycle = 0
                 data_train2 = BoundingBoxImageLoaderWithPseudoLabels(
                     pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_metadata_train.df',
                     root_dir=os.environ['DATA_DIR_PATH'],
                     transform=snapshotserengeti_train_transform2,
-                    pseudo_labels_pickle_file = f'./MoBYv2AL/models/pseudo_labels_{args.dataset}_{args.method_type}_{args.run_id}.pkl'
+                    pseudo_labels_pickle_file=f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_pseudo_labels.pkl'
                 )
             else:
                 data_train2 = BoundingBoxImageLoader(
@@ -574,13 +602,17 @@ def load_dataset(dataset, args, add_ssl=False, image_size=32):
     
     elif dataset == 'SnapshotSerengetiSmall':
         if args.sampling_strategy == 'corelbpseudo':
-            with open(f'./MoBYv2AL/models/pseudo_labels_{args.dataset}_{args.method_type}_{args.run_id}.pkl', 'wb') as file:
-                pickle.dump({}, file, protocol=pickle.HIGHEST_PROTOCOL)
+            if args.continuation:
+                cycle = int(args.continuation.split("_")[3]) 
+            else:
+                cycle = 0
+                with open(f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_pseudo_labels.pkl', 'wb') as file:
+                    pickle.dump({}, file, protocol=pickle.HIGHEST_PROTOCOL)
             data_train = BoundingBoxImageLoaderWithPseudoLabels(
                 pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_metadata_unique_train.df',
                 root_dir=os.environ['DATA_DIR_PATH'],
                 transform=snapshotserengeti_train_transform,
-                pseudo_labels_pickle_file=f'./MoBYv2AL/models/pseudo_labels_{args.dataset}_{args.method_type}_{args.run_id}.pkl'
+                pseudo_labels_pickle_file=f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_pseudo_labels.pkl'
             )
         else:
             data_train = BoundingBoxImageLoader(
@@ -588,7 +620,7 @@ def load_dataset(dataset, args, add_ssl=False, image_size=32):
                 root_dir=os.environ['DATA_DIR_PATH'],
                 transform=snapshotserengeti_train_transform)
         data_unlabeled = BoundingBoxImageLoader(
-            pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_metadata_train.df',
+            pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_metadata_unique_train.df',
             root_dir=os.environ['DATA_DIR_PATH'],
             transform=snapshotserengeti_train_transform)
         data_test = BoundingBoxImageLoader(
@@ -598,11 +630,15 @@ def load_dataset(dataset, args, add_ssl=False, image_size=32):
             is_test=True)
         if add_ssl:
             if args.sampling_strategy == 'corelbpseudo':
+                if args.continuation:
+                    cycle = int(args.continuation.split("_")[3]) 
+                else:
+                    cycle = 0
                 data_train2 = BoundingBoxImageLoaderWithPseudoLabels(
                     pickle_file=os.environ['DATA_DIR_PATH']+ '/' + 'df_metadata_unique_train.df',
                     root_dir=os.environ['DATA_DIR_PATH'],
                     transform=snapshotserengeti_train_transform2,
-                    pseudo_labels_pickle_file = f'./MoBYv2AL/models/pseudo_labels_{args.dataset}_{args.method_type}_{args.run_id}.pkl'
+                    pseudo_labels_pickle_file=f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_pseudo_labels.pkl'
                 )
             else:
                 data_train2 = BoundingBoxImageLoader(

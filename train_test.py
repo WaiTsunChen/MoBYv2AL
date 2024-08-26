@@ -72,6 +72,7 @@ def test(models, epoch, method, dataloaders, args, mode='val'):
     else:
         with torch.no_grad():
             total_loss = 0
+            Y_PRED, Y_TRUE, SCORES = [], [], []
             for (inputs, labels) in dataloaders[mode]:
                 
                 inputs = inputs.cuda()
@@ -91,6 +92,28 @@ def test(models, epoch, method, dataloaders, args, mode='val'):
                 total += labels.size(0)
                 correct += (preds == labels).sum().item()
                 # correct += preds.eq(labels).sum()
+            
+                if (epoch == args.no_of_epochs - 1) or args.early_stop_now:
+                    Y_PRED.append(preds.detach().cpu().numpy())
+                    Y_TRUE.append(labels.detach().cpu().numpy())
+                    SCORES.append(scores.detach().cpu().numpy())
+
+            if (epoch == args.no_of_epochs - 1) or args.early_stop_now:
+                Y_PRED = np.concatenate(Y_PRED, axis=0)
+                Y_TRUE = np.concatenate(Y_TRUE, axis=0)
+                SCORES = np.concatenate(SCORES, axis=0)
+
+                if args.dataset in ['SnapshotSerengeti','SnapshotSerengetiSmall']:
+                    target_names = pd.read_pickle(os.environ['DATA_DIR_PATH']+'/' + 'df_category_lut_adapted.df')
+                    target_names = target_names['name'].values[:len(np.unique(Y_TRUE))]
+                if args.dataset == 'SnapshotSerengeti10':
+                    target_names = pd.read_pickle(os.environ['DATA_DIR_PATH']+'/' + 'df_balanced_top_10_category_lut.df')
+                cl_report = classification_report(Y_TRUE, Y_PRED,target_names=target_names)
+                print(cl_report)
+                cycle = 0 # since args.total = True -> only one clyce
+                np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_prediction_label',Y_PRED)
+                np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_truth_label',Y_TRUE)
+                np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_scores_label',SCORES)
 
         test_features_list = torch.cat(test_features_list, dim=0)
         test_labels_list = torch.cat(test_labels_list, dim=0)
@@ -166,6 +189,7 @@ def test_with_ssl(models, epoch, method, dataloaders, args, mode='val'):
     else:
         with torch.no_grad():
             total_loss = 0
+            Y_PRED, Y_TRUE, SCORES = [], [], []
             for (inputs, labels) in dataloaders[mode]:
                 
                 inputs = inputs.cuda()
@@ -176,7 +200,29 @@ def test_with_ssl(models, epoch, method, dataloaders, args, mode='val'):
                 _, preds = torch.max(scores.data, 1)
                 total += labels.size(0)
                 correct += (preds == labels).sum().item()
+                print('DEBUGGING')
+                print(f'scores : {scores.detach().cpu().numpy()}')
+                print(f'scores shape: {scores.detach().cpu().numpy().shape}')
+                
+                if (epoch == args.no_of_epochs - 1) or args.early_stop_now:
+                    Y_PRED.append(preds.detach().cpu().numpy())
+                    Y_TRUE.append(labels.detach().cpu().numpy())
+                    SCORES.append(scores.detach().cpu().numpy())
+                print(f'scores shape list: {len(SCORES)}')
+                print(f'scores shape concat: {np.concatenate(SCORES,axis=0).shape}')
 
+            if (epoch == args.no_of_epochs - 1) or args.early_stop_now:
+                Y_PRED = np.concatenate(Y_PRED, axis=0)
+                Y_TRUE = np.concatenate(Y_TRUE, axis=0)
+                if args.dataset in ['SnapshotSerengeti','SnapshotSerengetiSmall']:
+                    target_names = pd.read_pickle(os.environ['DATA_DIR_PATH']+'/' + 'df_category_lut_adapted.df')
+                    target_names = target_names['name'].values[:len(np.unique(Y_TRUE))]
+                if args.dataset == 'SnapshotSerengeti10':
+                    target_names = pd.read_pickle(os.environ['DATA_DIR_PATH']+'/' + 'df_balanced_top_10_category_lut.df')
+                cl_report = classification_report(Y_TRUE, Y_PRED,target_names=target_names)
+                print(cl_report)
+                np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_prediction_label',Y_PRED)
+                np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_truth_label',Y_TRUE)
         
         return 100 * correct / total
 
@@ -298,13 +344,13 @@ def wandb_log_features(test_feature_list,test_labels_list,test_images_list,epoch
         
         wandb.log({"tsne": wandb.Image(full_image,caption='og images')})
 
-def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode='val',):
+def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode='val'):
     assert mode == 'val' or mode == 'test'
     models['backbone'].eval()
     models['classifier'].eval()
 
     if epoch > 1:
-        state_dict = torch.load('./MoBYv2AL/models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
+        state_dict = torch.load('./MoBYv2AL/%s/backbonehcss_%s_%d.pth'%(args.folder_path,args.dataset,cycle))
         # state_dict = checkpoint['state_dict']
         for k in list(state_dict.keys()):
             # retain only encoder_q up to before the embedding layer
@@ -326,7 +372,7 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
     models['classifier'].eval()
     if epoch > 1:
         models_b.load_state_dict(state_dict, strict=False)
-        models['classifier'].load_state_dict(torch.load('./MoBYv2AL/models/classifierhcss_%s_%d.pth'%(args.dataset,cycle)))
+        models['classifier'].load_state_dict(torch.load('./MoBYv2AL/%s/classifierhcss_%s_%d.pth'%(args.folder_path,args.dataset,cycle)))
     models_b.eval()
     total = 0
     correct = 0
@@ -345,7 +391,7 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
     else:
         with torch.no_grad():
             total_loss = 0
-            Y_PRED, Y_TRUE = [], []
+            Y_PRED, Y_TRUE , SCORES= [], [], []
             for (inputs, labels) in dataloaders[mode]:
                 inputs = inputs.cuda()
                 labels = labels.cuda()
@@ -360,9 +406,10 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
                 _, preds = torch.max(scores.data, 1)
                 total += labels.size(0)
                 correct += (preds == labels).sum().item()
-                if epoch == 201:
+                if (epoch == args.no_of_epochs-1) or args.early_stop_now:
                     Y_PRED.append(preds.detach().cpu().numpy())
                     Y_TRUE.append(labels.detach().cpu().numpy())
+                    SCORES.append(scores.detach().cpu().numpy())
 
         test_features_list = torch.cat(test_features_list, dim=0)
         test_labels_list = torch.cat(test_labels_list, dim=0)
@@ -379,19 +426,23 @@ def test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode=
         test_images_list = test_images_list[random_indices]
         wandb_log_features(test_features_list,test_labels_list,test_images_list,epoch)
         
-        if epoch ==201: #201 # 121
+        if (epoch ==args.no_of_epochs-1) or args.early_stop_now: #201 # 121
             Y_PRED = np.concatenate(Y_PRED, axis=0)
             Y_TRUE = np.concatenate(Y_TRUE, axis=0)
+            SCORES = np.concatenate(SCORES, axis=0)
             if args.dataset in ['SnapshotSerengeti','SnapshotSerengetiSmall']:
                 target_names = pd.read_pickle(os.environ['DATA_DIR_PATH']+'/' + 'df_category_lut_adapted.df')
                 target_names = target_names['name'].values[:len(np.unique(Y_TRUE))]
             if args.dataset == 'SnapshotSerengeti10':
                 target_names = pd.read_pickle(os.environ['DATA_DIR_PATH']+'/' + 'df_balanced_top_10_category_lut.df')
-            print(classification_report(Y_TRUE, Y_PRED,target_names=target_names))
-            np.save(f'./MoBYv2AL/models/{args.dataset}_{args.method_type}_{args.run_id}_prediction_label',Y_PRED)
-            np.save(f'./MoBYv2AL/models/{args.dataset}_{args.method_type}_{args.run_id}_truth_label',Y_PRED)
+            cl_report = classification_report(Y_TRUE, Y_PRED,target_names=target_names)
+            print(cl_report)
+            np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_prediction_label',Y_PRED)
+            np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_truth_label',Y_TRUE)
+            np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_scores_label',SCORES)
             Y_PRED = Y_PRED[random_indices]
             wandb_log_confusion_matrix(Y_PRED,test_labels_list,"validation",args.dataset)
+            wandb.log({'classification report':cl_report})
         
         return 100 * correct / total
 
@@ -459,7 +510,7 @@ def train(models, method, criterion, optimizers, schedulers, dataloaders, num_ep
         if method == 'lloss':
             schedulers['module'].step(loss)
 
-        if True and epoch % 20  == 1:
+        if epoch > 160 and epoch % 20  == 1:
 
             acc = test(models, epoch, method, dataloaders, args, mode='test')
 
@@ -472,7 +523,7 @@ def train(models, method, criterion, optimizers, schedulers, dataloaders, num_ep
             else:
                 if best_acc < acc:
                     best_acc = acc
-                    torch.save(models['backbone'].state_dict(), './MoBYv2AL/models/backbone.pth')
+                    torch.save(models['backbone'].state_dict(), f'./MoBYv2AL/{args.folder_path}/backbone.pth')
                 print('Val Acc: {:.3f} \t Best Acc: {:.3f}'.format(acc, best_acc))
     print('>> Finished.')
     return best_acc
@@ -512,8 +563,8 @@ def train_with_ssl(models, method, criterion, optimizers, schedulers, dataloader
                            epoch_loss, args, l_lab, l_ulab, cycle):
     print('>> Train a Model.')
     best_acc = 0.
-    if os.path.isfile('./MoBYv2AL/models/ssl_backbone.pth'):
-        models['backbone'].load_state_dict(torch.load('./MoBYv2AL/models/ssl_backbone.pth'))
+    if os.path.isfile(f'./MoBYv2AL/{args.folder_path}/ssl_backbone.pth'):
+        models['backbone'].load_state_dict(torch.load(f'./MoBYv2AL/{args.folder_path}/ssl_backbone.pth'))
     for epoch in range(num_epochs):
 
         best_loss = torch.tensor([99]).cuda()
@@ -521,7 +572,7 @@ def train_with_ssl(models, method, criterion, optimizers, schedulers, dataloader
                                         epoch, epoch_loss, l_lab, l_ulab, schedulers, True)
 
         
-        if True and epoch % 20  == 1:
+        if True or epoch % 20  == 1:
             acc = test_with_ssl(models, epoch, method, dataloaders, args, mode='test')
             print(loss.item())
 
@@ -529,7 +580,7 @@ def train_with_ssl(models, method, criterion, optimizers, schedulers, dataloader
                 best_acc = acc
             if best_loss > loss:
                 best_loss = loss
-                torch.save(models['backbone'].state_dict(), './MoBYv2AL/models/ssl_backbone.pth' )
+                torch.save(models['backbone'].state_dict(), f'./MoBYv2AL/{args.folder_path}/ssl_backbone.pth' )
                 
 
             print('Val Acc: {:.3f} \t Best Acc: {:.3f}'.format(acc, best_acc))
@@ -557,7 +608,7 @@ def wandb_log_confusion_matrix(y_pred,y_true,caption,dataset):
     })
 
 def train_epoch_ssl2(models, method, criterion, optimizers, dataloaders, 
-                                        epoch, schedulers, cycle, last_inter,args):
+                        epoch, schedulers, cycle, last_inter, args, early_stopper):
     models['backbone'].train()
     models['classifier'].train()
     TRAIN_CLIP_GRAD = True
@@ -573,14 +624,14 @@ def train_epoch_ssl2(models, method, criterion, optimizers, dataloaders,
 
         contrastive_loss, features, _ = models['backbone'](samples_a, samples_r, targets)
 
-        if (idx % 2 ==0) or (idx <= last_inter):
+        if (idx % 2 ==0):# or (idx <= last_inter):
             scores = models['classifier'](features)
             target_loss = criterion(scores, targets)
             t_loss = (torch.sum(target_loss)) / target_loss.size(0)
             c_loss = (torch.sum(contrastive_loss)) / contrastive_loss.size(0)
             loss = t_loss + c_loss_gain*c_loss
             # loss.backward()
-            if epoch == args.no_of_epochs - 1:
+            if epoch == args.no_of_epochs - 1 or early_stopper.counter + 1 == early_stopper.patience:
                 Y_PRED.append(np.argmax(scores.detach().cpu().numpy(),axis=1))
                 Y_TRUE.append(targets.detach().cpu().numpy())
         else:
@@ -588,15 +639,18 @@ def train_epoch_ssl2(models, method, criterion, optimizers, dataloaders,
         optimizers['backbone'].zero_grad()
         loss.backward()
         optimizers['backbone'].step()
-        if (idx % 2 ==0) or (idx <= last_inter):
+        if (idx % 2 ==0):# or (idx <= last_inter):
             optimizers['classifier'].zero_grad()
             optimizers['classifier'].step()
     
         # if idx % 100 == 0:
-        wandb.log({"task loss":t_loss, "contrastive loss":c_loss, "epoch":epoch, 'self-supervised loss':c_loss_gain *(torch.sum(contrastive_loss)) / contrastive_loss.size(0)})
+        wandb.log({"task loss":t_loss, "contrastive loss":c_loss, "epoch":epoch, 
+            'self-supervised loss':c_loss_gain *(torch.sum(contrastive_loss)) / contrastive_loss.size(0),
+            'overall_loss': loss,
+            })
         idx +=1
     
-    if epoch == args.no_of_epochs - 1:
+    if epoch == args.no_of_epochs - 1 or early_stopper.counter + 1 == early_stopper.patience:
         Y_PRED = np.concatenate(Y_PRED, axis=0)
         Y_TRUE = np.concatenate(Y_TRUE, axis=0)
         wandb_log_confusion_matrix(Y_PRED,Y_TRUE,"training",args.dataset)
@@ -625,6 +679,79 @@ def evaluate_labeldispersion_unlabeled_data(label_dispersion_metric,models,datal
                     label_dispersion_metric[index].append(prediction)
     # return label_dispersion_metric
 
+# early stoper class, holding essential metrics
+class EarlyStopper:
+    def __init__(self, patience=5, min_delta=0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.min_validation_loss = float('inf')
+
+    def check_early_stop(self, validation_loss):
+        # print(f'comparing validation_loss {validation_loss} with min_validation_loss{self.min_validation_loss}')
+        if validation_loss < self.min_validation_loss:
+            self.min_validation_loss = validation_loss
+            self.counter = 0
+        
+        elif validation_loss >= (self.min_validation_loss + self.min_delta):
+            self.counter += 1
+            if self.counter >= self.patience:
+                return True
+        return False
+
+def validate_epoch_ssl2(models, method, criterion, optimizers, dataloaders, epoch, cycle, args, no_classes):
+    models['backbone'].eval()
+    models['classifier'].eval()
+    c_loss_gain = 0.5
+    mode = 'val'
+    if epoch > 1:
+        state_dict = torch.load('./MoBYv2AL/%s/backbonehcss_%s_%d.pth'%(args.folder_path,args.dataset,cycle))
+        # state_dict = checkpoint['state_dict']
+        for k in list(state_dict.keys()):
+            # retain only encoder_q up to before the embedding layer
+            if k.startswith('encoder') and not ( k.startswith('encoder.classifier') or  k.startswith('encoder_k') ):
+                # remove prefix
+                state_dict[k[len("encoder."):]] = state_dict[k]
+            # delete renamed or unused k
+            del state_dict[k]
+    # del state_dict
+    if args.learner_architecture == "vgg16":
+        models_b = resnet.dnn_16enc(no_classes).cuda()
+    elif args.learner_architecture == "resnet18":
+        models_b = resnet.ResNet18E(no_classes).cuda()
+    elif args.learner_architecture == "wideresnet28":
+        models_b = resnet.Wide_ResNet28(no_classes).cuda()
+    elif args.learner_architecture == "lenet5":
+        models_b = LeNet5().cuda()
+
+    models['classifier'].eval()
+    if epoch > 1:
+        models_b.load_state_dict(state_dict, strict=False)
+        models['classifier'].load_state_dict(torch.load('./MoBYv2AL/%s/classifierhcss_%s_%d.pth'%(args.folder_path,args.dataset,cycle)))
+    models_b.eval()
+    total = 0
+    correct = 0
+    test_features_list, test_labels_list, test_images_list, Y_PRED = [], [], [], []
+
+    with torch.no_grad():
+        total_loss = 0
+        Y_PRED, Y_TRUE , INDICES= [], [], []
+        for (inputs, labels, _) in dataloaders[mode]:
+            inputs = inputs.cuda()
+            labels = labels.cuda()
+
+            contrastive_loss, feat, _ = models['backbone'](inputs,inputs,labels)
+            # feat = models_b(inputs)
+            scores = models['classifier'](feat)
+            target_loss = criterion(scores, labels)
+            _, preds = torch.max(scores.data, 1)
+            total += labels.size(0)
+            correct += (preds == labels).sum().item()
+            t_loss = (torch.sum(target_loss)) / target_loss.size(0)
+            c_loss = (torch.sum(contrastive_loss)) / contrastive_loss.size(0)
+            loss = t_loss + c_loss_gain*c_loss
+    return loss
+
 def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloaders, num_epochs, 
                            no_classes, args, labeled_data, unlabeled_data, data_train, cycle, last_inter, ADDENDUM, dim_latent):
     print('>> Train a Model.')
@@ -634,7 +761,7 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
     l_lab = 0
     l_ulab = 0
     if args.sampling_strategy == 'labeldispersion' and args.continuation:
-        path = f'./MoBYv2AL/models/{args.dataset}_{args.method_type}_{args.run_id}_labeldispersion_indices.pkl'
+        path = f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_labeldispersion_indices.pkl'
         with open(path, 'rb') as file:
             label_dispersion_metric = pickle.load(file)
     else:     
@@ -643,38 +770,52 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
 #        ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
  #       with record_function("model_training"):
             # if not os.path.isfile('models/moby_backbone_full.pth'):
+    
+    early_stopper_contrastive_loss = EarlyStopper(patience=5,min_delta=1e-5)
+    early_stopper = EarlyStopper(patience=5,min_delta=1e-5)
+
     for epoch in range(num_epochs):
         print(f'EPOCH NUMBER: {epoch}')
         best_loss = torch.tensor([99]).cuda()
         # loss = train_epoch(models, method, criterion, optimizers, dataloaders, epoch, epoch_loss)
-        loss = train_epoch_ssl2(models, method, criterion, optimizers, dataloaders, epoch, schedulers, cycle, last_inter, args)
+        loss = train_epoch_ssl2(models, method, criterion, optimizers, dataloaders, epoch, schedulers, cycle, last_inter, args, early_stopper)
         schedulers['classifier'].step(loss)
         schedulers['backbone'].step(loss)
 
+        validation_loss = validate_epoch_ssl2(models, method, criterion, optimizers, dataloaders, epoch, cycle, args, no_classes)
+        # print(f'early stopping loss: {early_stopper.min_validation_loss:.3f}')
+        # print(f'early sstopping counter: {early_stopper.counter:.3f}')
+        args.early_stop_now = early_stopper.check_early_stop(validation_loss) #boolean, True -> early stop now
+        # args.early_stop_now = False
+    
+
         if epoch == 0: # DEBUGGING
-            torch.save(models['backbone'].state_dict(), './MoBYv2AL/models/backbonehcss_%s_%d.pth'%(args.dataset,cycle)) 
-            torch.save(models['classifier'].state_dict(), './MoBYv2AL/models/classifierhcss_%s_%d.pth'%(args.dataset,cycle))
-        if epoch > 100 and epoch % 20  == 1: # DEBUGGING, change back to True
+            torch.save(models['backbone'].state_dict(), './MoBYv2AL/%s/backbonehcss_%s_%d.pth'%(args.folder_path,args.dataset,cycle)) 
+            torch.save(models['classifier'].state_dict(), './MoBYv2AL/%s/classifierhcss_%s_%d.pth'%(args.folder_path,args.dataset,cycle))
+        if (epoch > 1 and epoch % 5  == 1) or args.early_stop_now: # DEBUGGING, change back to True
             # acc = test_with_ssl(models, epoch, method, dataloaders, args, mode='test')
             # print(loss.item())
 
             acc = test_without_ssl2(models, epoch, no_classes, dataloaders, args, cycle, mode='test')
 #            acc = 0
             if best_acc < acc:
-                torch.save(models['backbone'].state_dict(), './MoBYv2AL/models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
-                torch.save(models['classifier'].state_dict(), './MoBYv2AL/models/classifierhcss_%s_%d.pth'%(args.dataset,cycle))
+                torch.save(models['backbone'].state_dict(), './MoBYv2AL/%s/backbonehcss_%s_%d.pth'%(args.folder_path,args.dataset,cycle))
+                torch.save(models['classifier'].state_dict(), './MoBYv2AL/%s/classifierhcss_%s_%d.pth'%(args.folder_path,args.dataset,cycle))
                 best_acc = acc
 
             print('Acc: {:.3f} \t Best Acc: {:.3f}'.format(acc, best_acc))
         
         if args.sampling_strategy in ['labeldispersion','corelb','corelbpseudo']:
             print('doing label dispersion loop!')
-            if epoch % 10 == 1: # change back to 1 after DEBUGGING 
+            if True or epoch % 10 == 1: # change back to 1 after DEBUGGING 
                 evaluate_labeldispersion_unlabeled_data(label_dispersion_metric,models,dataloaders)
-                with open(f'./MoBYv2AL/models/{args.dataset}_{args.method_type}_{args.run_id}_labeldispersion_indices.pkl', 'wb') as file:
+                with open(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_labeldispersion_indices.pkl', 'wb') as file:
                     pickle.dump(label_dispersion_metric, file, protocol=pickle.HIGHEST_PROTOCOL)
 
-        wandb.log({"training loss":loss})
+        wandb.log({"training loss":loss, "validation loss":validation_loss})
+        
+        if args.early_stop_now:
+            break
 #    print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=10))
     print('>> Finished.')
     
@@ -694,7 +835,7 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
     k_var = 2
     c_loss_m = np.zeros((k_var, args.batch*len(dataloaders['unlabeled'])))
 
-    state_dict = torch.load('./MoBYv2AL/models/backbonehcss_%s_%d.pth'%(args.dataset,cycle))
+    state_dict = torch.load('./MoBYv2AL/%s/backbonehcss_%s_%d.pth'%(args.folder_path,args.dataset,cycle))
 
     for k in list(state_dict.keys()):
         # retain only encoder_q up to before the embedding layer
@@ -714,8 +855,16 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
         models_b = LeNet5().cuda()
     models_b.load_state_dict(state_dict, strict=False)
     models_b.eval()
-    combined_dataset = DataLoader(data_train, batch_size=args.batch, 
-                                    sampler=SubsetSequentialSampler(unlabeled_data+labeled_data),
+
+    if args.sampling_strategy == 'corelbpseudo' and cycle >0:
+        human_labeled_indices = np.load(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle-1}_human_labeled_indices.npy')
+        human_labeled_indices = list(human_labeled_indices)
+        combined_dataset = DataLoader(data_train, batch_size=args.batch, 
+                                    sampler=SubsetSequentialSampler(unlabeled_data+human_labeled_indices), # restriction applies to corelb pseudo 
+                                    pin_memory=False, drop_last=False, num_workers = int(os.environ['NUM_WORKERS']))
+    else:
+        combined_dataset = DataLoader(data_train, batch_size=args.batch, 
+                                    sampler=SubsetSequentialSampler(unlabeled_data+labeled_data), 
                                     pin_memory=False, drop_last=False, num_workers = int(os.environ['NUM_WORKERS']))
     
     features_indices = [] # tracking indices of features
@@ -735,7 +884,13 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
 
     features = features[args.batch:,:] # omit the first batch, since these are empty.
     subset = len(unlabeled_data)
+    BASE_BUDGET = 4500
+    if cycle >0 and args.sampling_strategy == 'corelbpseudo':
+        print(f'new labeled_data size: {len(human_labeled_indices)} old labeled_data size: {len(labeled_data)}')
     labeled_data_size = len(labeled_data)
+    print(f'unlabeled set: {subset}, labeled_data_size: {labeled_data_size}, feature size: {len(features)}')
+    np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_features',features)
+    np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_features_label',features_labels)
     high_lb_indices = [] # for all other sampling strategy not using laber dispersion.
     
     if args.sampling_strategy=='coreset':
@@ -804,13 +959,17 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
         subset = len(unlabeled_data) - len(high_lb_indices) 
         print(f'length subset: {subset}')
 
-        new_av_idx = da.arange(subset,(subset + labeled_data_size))
-        new_av_idx = xr.DataArray(data=new_av_idx,dims=['0'])
+        if args.sampling_strategy == 'corelbpseudo' and cycle >0:
+            new_av_idx = da.arange(subset,(subset + len(human_labeled_indices)))
+        else:
+            new_av_idx = da.arange(subset,(subset + labeled_data_size))
+        # new_av_idx = np.arange(subset,subset)
+        # new_av_idx = xr.DataArray(data=new_av_idx,dims=['0'])
         # new_av_idx = xr.DataArray(data=da.zeros((157784,112615)),dims=["0","1"])
         print(f'new av idx shape: {new_av_idx.shape}')
         print(f'new av idx type: {type(new_av_idx)}')
         print(f'new av idx: {new_av_idx}')
-        features_filtered = xr.DataArray(data=features_filtered,dims=['0','1'])
+        # features_filtered = xr.DataArray(data=features_filtered,dims=['0','1'])
         # features_filtered = xr.DataArray(da.from_array(features_filtered),dims=['0','1'])
         sampling = kCenterGreedy(features_filtered)  
         av_idx_batch = sampling.select_batch_(new_av_idx, ADDENDUM) # batch with new_av_idx
@@ -818,20 +977,36 @@ def train_with_ssl2(models, method, criterion, optimizers, schedulers, dataloade
         tmp_unlabeled_data = np.array(unlabeled_data)
         batch = tmp_unlabeled_data[av_idx_batch]
 
+        if cycle <=0:
+            human_labeled_indices = list(batch) + labeled_data
+            np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_human_labeled_indices',human_labeled_indices)
+        elif cycle >0:
+            human_labeled_indices = np.load(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle-1}_human_labeled_indices.npy')
+            human_labeled_indices = list(human_labeled_indices) + list(batch)
+            np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_human_labeled_indices',human_labeled_indices)
+        
         for b in batch:
             if b not in unlabeled_data:
                 raise Exception(f' {b} not in unlabeled_data')
 
         
         if args.sampling_strategy == 'corelbpseudo':
-            pseudo_labels = {}
+            if cycle == 0:
+                pseudo_labels = {}
+            else:
+                with open(f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle-1}_pseudo_labels.pkl', 'rb') as file:
+                    pseudo_labels = pickle.load(file)
             # save high label dispersion indices in a file in form{indices: pseudo_label}
+            high_label_dispersion_indices = {}
             for index in high_lb_indices:
-                if label_dispersion >=1:
-                    pseudo_labels[index] = label_dispersion_metric[index][-1] # since all elements are the same, take the last one.
-            
-            with open(f'./MoBYv2AL/models/pseudo_labels_{args.dataset}_{args.method_type}_{args.run_id}.pkl', 'wb') as file:
+                pseudo_labels[index] = label_dispersion_metric[index][-1] # since all elements are the same, take the last one.
+                high_label_dispersion_indices[index] = label_dispersion_metric[index][-1]
+
+            with open(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_pseudo_labels.pkl', 'wb') as file:
                 pickle.dump(pseudo_labels, file, protocol=pickle.HIGHEST_PROTOCOL)
+
+            with open(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_high_lb_indices.pkl', 'wb') as file:
+                pickle.dump(high_label_dispersion_indices, file, protocol=pickle.HIGHEST_PROTOCOL)
             
             batch = list(batch) + high_lb_indices
 

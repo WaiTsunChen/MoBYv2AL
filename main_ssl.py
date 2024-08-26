@@ -28,10 +28,11 @@ from selection_methods import query_samples
 from sampler import SubsetSequentialSampler
 import wandb
 from dotenv import load_dotenv
+import pickle
 
 load_dotenv()
 sys.path.append(".")
-
+# torch.multiprocessing.set_sharing_strategy('file_system')
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-d","--dataset", type=str, default="cifar10",
@@ -56,6 +57,14 @@ parser.add_argument("-b","--batch", type=int, default=128,
                     help="Batch size used for training")
 parser.add_argument("-ims","--image_size", type=int, default=32,
                     help="Size of the image")
+parser.add_argument("-sst", "--sampling_strategy", type=str, default="coreset",
+                    help="sampling strategy")
+parser.add_argument("-cont","--continuation", type=str,default=None,
+                    help="continue where slurm broke off")
+parser.add_argument('-id',"--run_id",type=int,default=0,
+                    help="artifical id to identify, in case slurm breaks")
+parser.add_argument('-asi',"--advanced_starting_indices", type=str, default='no',
+                    help="if True ensures one image in the labeled set for all species.")
 args = parser.parse_args()
 
 ##
@@ -67,7 +76,7 @@ if __name__ == '__main__':
     else:
         args.ssl = False
     CUDA_VISIBLE_DEVICES = 0
-    MILESTONES = [60,120,160]
+    MILESTONES = [60,120,160] #[20,30,60]
     MOMENTUM = 0.9
     WDECAY = 5e-4
     LR = 1e-2
@@ -77,7 +86,7 @@ if __name__ == '__main__':
     BATCH = args.batch
     TRIALS = args.trials
     methods = ['Random', 'CoreSet', 'mobyv2al']
-    datasets = ['cifar10', 'cifar100', 'fashionmnist','svhn','svhn5','SnapshotSerengeti10']
+    datasets = ['cifar10', 'cifar100', 'fashionmnist','svhn','svhn5','SnapshotSerengeti10','SnapshotSerengeti','SnapshotSerengetiSmall']
     learner_models = ["vgg16","resnet18","lenet5","wideresnet28"]
     assert method in methods, 'No method %s! Try options %s'%(method, methods)
     assert args.dataset in datasets, 'No dataset %s! Try options %s'%(args.dataset, datasets)
@@ -95,13 +104,19 @@ if __name__ == '__main__':
     else:
         CYCLES = args.cycles
 
+    #create subfolder for storing results, indices, models, features
+    args.folder_path = f'results/{args.dataset}_{args.method_type}_{args.run_id}'
+    os.makedirs(f'./MoBYv2AL/{args.folder_path}',exist_ok=True)
+    # create early stop flag
+    args.early_stop_now = False
+
     # print(args.visual_transformer)
     wandb.login(key=os.environ['WANDB_KEY'])
     with wandb.init(project="mobyv2al", config=args):
         for trial in range(TRIALS):
 
             # Load training and testing dataset
-            data_train, data_unlabeled, data_test, NO_CLASSES, no_train, data_train2, data_unlabeled2 = load_dataset(args.dataset, args.ssl, args.image_size)
+            data_train, data_unlabeled, data_test, NO_CLASSES, no_train, data_train2, data_unlabeled2 = load_dataset(args.dataset, args, args.ssl, args.image_size,) 
                     
             print(len(data_train))
 
@@ -111,8 +126,11 @@ if __name__ == '__main__':
             random.shuffle(indices)
 
             if args.total:
-                labeled_set= indices
+                labeled_set= indices[:4500] + indices[5000:]
+                validation_set = indices[4500:5000]
                 unlabeled_set = [x for x in range(0, NUM_TRAIN)]
+                init_margin = int(NUM_TRAIN/10)
+                ADDENDUM = 2500
             else:
                 if args.dataset=='fashionmnist':
                     if os.path.isfile("init_set_fm.npy"):
@@ -144,33 +162,68 @@ if __name__ == '__main__':
                 else:
                     ADDENDUM = 2500
                     init_margin = int(NUM_TRAIN/10)
-                    if os.path.isfile("init_set.npy"):
+                    if args.continuation: # workaround since slurm gpu usage drops down(?)
+                        #search for the most recent label indices 
+                        labeled_set = np.load(f'./MoBYv2AL/{args.folder_path}/{args.continuation}.npy', allow_pickle=True).tolist()
+                        validation_set = np.load(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_validation_labeled_indices.npy', allow_pickle=True).tolist()
+                    # elif os.path.isfile("init_set.npy"):
                         # take 10% of the labelled data at first run for CIFAR10/100
-                        labeled_set = np.load("init_set.npy").tolist()
+                        # labeled_set = np.load("init_set.npy").tolist()
+                        # labeled_set = indices[:27500]
+                    
+                    elif args.advanced_starting_indices=='yes' and args.dataset == 'SnapshotSerengetiSmall':
+                        # esure there is one labeled image for each class
+                        labeled_set_core_path = os.environ['DATA_DIR_PATH']+ '/' + 'one_index_per_class_category.npy'
+                        labeled_set_core = np.load(labeled_set_core_path, allow_pickle=True).tolist()
+                        labeled_set = indices[:4500]
+                        for idx, core in enumerate(labeled_set_core):
+                            if core not in labeled_set:
+                                labeled_set[idx] = core
+                        validation_set = indices[4500:5000]
+                        np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_validation_labeled_indices', np.asarray(validation_set))
+                        
                     else:
-                        labeled_set = indices[:5000] 
-                        np.save("init_set.npy", np.asarray(labeled_set))
+                        labeled_set = indices[:4500]
+                        validation_set = indices[4500:5000]
+                        # labeled_set = indices[:150000]
+                        # labeled_set = indices[:169999] # minus1
+                        # labeled_set = indices[:1277250] #minus 1
+                        # labeled_set = indices[:27500]
+                        # np.save("init_set.npy", np.asarray(labeled_set))
+                        np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_validation_labeled_indices', np.asarray(validation_set))
+
                 print(ADDENDUM)
-                unlabeled_set = set(indices) - set(labeled_set) #[x for x in indices if x not in labeled_set]
-                unlabeled_set = list(unlabeled_set)
+                unlabeled_set = list(set(indices) - set(labeled_set)- set(validation_set))
+                random.shuffle(unlabeled_set)
+                # unlabeled_set = list(unlabeled_set)
+                
 
             lab_loader = DataLoader(data_train, batch_size=BATCH, 
                                         sampler=SubsetSequentialSampler(labeled_set), 
-                                        pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS)
+                                        pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS)
             test_loader  = DataLoader(data_test, batch_size=BATCH, drop_last=drop_flag, num_workers=NUM_WORKERS)
+            validation_loader = DataLoader(data_train, batch_size=BATCH, 
+                                                sampler=SubsetSequentialSampler(validation_set), 
+                                                pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS,
+                                                prefetch_factor=4
+                                                )
             if args.ssl:
                 lab_loader2 = DataLoader(data_train2, batch_size=BATCH, 
                                         sampler=SubsetSequentialSampler(labeled_set), 
-                                        pin_memory=True, drop_last=drop_flag)
+                                        pin_memory=False, drop_last=drop_flag)
 
-                dataloaders  = {'train': lab_loader, 'train2': lab_loader2, 'test': test_loader}
+                dataloaders  = {'train': lab_loader, 'train2': lab_loader2, 'test': test_loader, 'val':validation_loader}
             else:
-                dataloaders  = {'train': lab_loader, 'test': test_loader}
+                dataloaders  = {'train': lab_loader, 'test': test_loader, 'val': validation_loader}
             
             
 
             # Active learning cycle
-            for cycle in range(args.cycles):
+            cycle_start = 0
+            if args.continuation:
+                cycle_start = int(args.continuation.split("_")[3])
+                
+            for cycle in range(cycle_start,args.cycles,1):
                 
                 # Randomly sample SUBSET unlabeled data points
                 if not args.total:
@@ -195,7 +248,7 @@ if __name__ == '__main__':
 
                 unlab_loader = DataLoader(data_unlabeled, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(subset), 
-                                                pin_memory=True, drop_last=drop_flag)
+                                                pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS)
 
                 if (args.method_type == "mobyv2al"):
                     # Interleave labelled and unlabelled batches.
@@ -224,28 +277,38 @@ if __name__ == '__main__':
                     # else:
                     #     interleaved = interleaved + labeled_set[(idx+1)*BATCH:]
                     last_interleaved = idx
+                    print(f'last interleave: {last_interleaved}')
+                    # if args.sampling_strategy == 'corelbpseudo' and cycle >=1:
+                    #     with open(f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle-1}_pseudo_labels.pkl', 'rb') as file:
+                    #         pseudo_labels = pickle.load(file)
+                    #     data_train.pseudo_labels = pseudo_labels 
                     if args.ssl:
                         lab_loader = DataLoader(data_train, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(interleaved), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS, 
-                                                prefetch_factor=2)
+                                                pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS, 
+                                                prefetch_factor=4
+                                                )
                         lab_loader2 = DataLoader(data_train2, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(interleaved), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS,
-                                                prefetch_factor=2)
+                                                pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS,
+                                                prefetch_factor=4
+                                                )
                         unlab_loader2 = DataLoader(data_unlabeled2, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(subset), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS, 
-                                                prefetch_factor=2)
+                                                pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS, 
+                                                prefetch_factor=4
+                                                )
                         unlab_loader = DataLoader(data_unlabeled, batch_size=BATCH, 
                                                 sampler=SubsetSequentialSampler(subset), 
-                                                pin_memory=True, drop_last=drop_flag, num_workers=NUM_WORKERS,
-                                                prefetch_factor=2)
+                                                pin_memory=False, drop_last=drop_flag, num_workers=NUM_WORKERS,
+                                                prefetch_factor=4
+                                                )
                         dataloaders  = {'train': lab_loader, 'train2': lab_loader2, 
-                                        'test': test_loader, 'unlabeled': unlab_loader, 'unlabeled2': unlab_loader2}
+                                        'test': test_loader, 'unlabeled': unlab_loader, 
+                                        'unlabeled2': unlab_loader2, 'val':validation_loader}
                 else:
                     dataloaders  = {'train': lab_loader, 
-                                'test': test_loader, 'unlabeled': unlab_loader}
+                                'test': test_loader, 'unlabeled': unlab_loader, 'val': validation_set}
                 
                 # Model - create new instance for every cycle so that it resets
                 with torch.cuda.device(CUDA_VISIBLE_DEVICES):
@@ -287,8 +350,26 @@ if __name__ == '__main__':
                 
                 torch.backends.cudnn.benchmark = True
 
-                Nes_flag = False        
-                criterion      = nn.CrossEntropyLoss(reduction='none')
+                Nes_flag = False
+                imbalanced_weight = None
+                if args.dataset in ['SnapshotSerengeti','SnapshotSerengetiSmall']:
+                    imbalanced_weight = torch.tensor(
+                        [9.88957138e-01, 7.43517187e+00, 9.62989128e+00, 1.11792148e-01,
+                        9.21205193e+01, 1.50810242e-01, 3.38762817e+00, 1.54643790e+00,
+                        9.31626781e-01, 9.63842993e-01, 6.86251343e+01, 1.54459209e+00,
+                        5.23613742e+01, 5.21864139e-01, 9.95149890e-01, 1.02040978e+00,
+                        4.86570623e-02, 1.01024361e+02, 1.77039434e+01, 2.32567849e+00,
+                        1.72106100e+01, 4.58040674e+00, 8.59441910e+00, 4.38315374e+02,
+                        8.91001744e+01, 3.37584512e+01, 1.15640652e+02, 1.38509445e+01,
+                        1.23525242e+02, 4.21326406e+01, 5.87198643e+00, 3.59464989e+01,
+                        4.77601989e+01, 5.29737879e+01, 2.74778091e+01, 3.79334913e+00,
+                        4.10506846e+01, 1.55912525e+01, 3.61521261e+00, 3.43994344e+02,
+                        3.08813104e+02, 5.90772895e+02, 5.78203259e+02, 1.23525242e+03,
+                        2.92210249e+02, 4.94100967e+02]#,7.76444377e+01]
+                    )
+                    imbalanced_weight = imbalanced_weight.cuda()
+                    imbalanced_weight = None
+                criterion      = nn.CrossEntropyLoss(reduction='none',weight=imbalanced_weight)
                 optim_backbone = optim.SGD(models['backbone'].parameters(), lr=LR*1, 
                 momentum=MOMENTUM, weight_decay=WDECAY, nesterov=Nes_flag)
 
@@ -340,26 +421,33 @@ if __name__ == '__main__':
                 wandb.log({"label_set_size": len(labeled_set), "final_test_acc": acc})
 
 
-                if cycle == (CYCLES-1):
-                    # Reached final training cycle
-                    print("Finished.")
-                    break
                 # Get the indices of the unlabeled samples to train on next cycle
                 if (args.method_type != "mobyv2al"):
                     arg = query_samples(models, method, data_unlabeled, subset, labeled_set, cycle, args, drop_flag, ADDENDUM)
+                    labeled_set += list(torch.tensor(subset)[arg][-ADDENDUM:].numpy())
+                else: # change made for mobyv2al, directly returns datapoint indices instead of position.
+                    labeled_set += list(arg)
                 # random sampling
-#                arg = np.random.randint(len(subset), size=len(subset))
+                # arg = np.random.randint(len(subset), size=len(subset))
                 # Update the labeled dataset and the unlabeled dataset, respectively
-                labeled_set += list(torch.tensor(subset)[arg][-ADDENDUM:].numpy())
+                np.save(f'./MoBYv2AL/{args.folder_path}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_labeled_indices', np.asarray(labeled_set))
                 dataloaders['train'] = DataLoader(data_train, batch_size=BATCH, 
                                             sampler=SubsetRandomSampler(labeled_set), 
-                                            pin_memory=True, drop_last=drop_flag)
+                                            pin_memory=False, drop_last=drop_flag)
                 #listd = list(torch.tensor(subset)[arg][:ADDENDUM].numpy()) 
                 unlabeled_set = [x for x in range(NUM_TRAIN) if x not in labeled_set]
+                if False or args.sampling_strategy == 'corelbpseudo' and  cycle>0:
+                    with open(f'./MoBYv2AL/results/{args.dataset}_{args.method_type}_{args.run_id}/{args.dataset}_{args.method_type}_{args.run_id}_{cycle}_pseudo_labels.pkl', 'rb') as file:
+                        pseudo_labels = pickle.load(file)
+                    unlabeled_set = [x for x in unlabeled_set if x not in pseudo_labels.keys()]
                 #unlabeled_set =  [x for x in unlabeled_set if x not in listd]
                 random.shuffle(unlabeled_set)
 
                 #unlabeled_set = listd + unlabeled_set
                 print(len(labeled_set), min(labeled_set), max(labeled_set))
-
+                if cycle == (CYCLES-1):
+                    # Reached final training cycle
+                    print("Finished.")
+                    break
+                    
     results.close()

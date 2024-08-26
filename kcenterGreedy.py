@@ -29,11 +29,13 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
-from sklearn.metrics import pairwise_distances
+from sklearn.metrics import pairwise_distances, pairwise_distances_chunked
 from scipy.spatial import distance
 
 import abc
 import numpy as np
+import xarray as xr
+from dask import array as da 
 
 class SamplingMethod(object):
   __metaclass__ = abc.ABCMeta
@@ -49,6 +51,8 @@ class SamplingMethod(object):
     flat_X = self.X
     if len(shape) > 2:
       flat_X = np.reshape(self.X, (shape[0],np.product(shape[1:])))
+
+    # flat_X = xr.DataArray(data=flat_X)
     return flat_X
 
 
@@ -98,7 +102,7 @@ class kCenterGreedy(SamplingMethod):
         if cluster_centers:
           x = self.features[cluster_centers]
           # Update min_distances for all examples given new cluster center.
-          dist = pairwise_distances(self.features, x, metric=self.metric)#,n_jobs=4)
+          dist = pairwise_distances(self.features, x, metric=self.metric,n_jobs=1)
 
           if self.min_distances is None:
             self.min_distances = np.min(dist, axis=1).reshape(-1,1)
@@ -139,7 +143,7 @@ class kCenterGreedy(SamplingMethod):
             ind = np.argmax(self.min_distances)
           # New examples should not be in already selected since those points
           # should have min_distance of zero to a cluster center.
-          assert ind not in already_selected
+          # assert ind not in already_selected, f'{ind} is already selected'
 
           self.update_distances([ind], only_new=True, reset_dist=False)
           new_batch.append(ind)

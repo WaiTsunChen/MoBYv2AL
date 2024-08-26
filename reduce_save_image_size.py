@@ -8,6 +8,10 @@ import os
 from multiprocessing import Pool
 
 def process_crop_resize_save(row):
+    '''
+    Function to crop and resize images and save them to a new directory.
+    See "preprocessing" chapter.
+    '''
     print(f'starting process {os.getpid()}')
     path_input = '/Volumes/data01/waitsun/snapshotSerengeti/'
     path_output = '/Volumes/data01/waitsun/snapshotSerengetiCropedResized/'
